@@ -9,7 +9,7 @@ include(CheckLanguage)
 check_language(CUDA)
 
 set(CMAKE_CXX_STANDARD 20)
-set(CUDA_COMPUTE_CAPABILITY 86)
+set(CUDA_COMPUTE_CAPABILITY 89)
 
 # in debug mode, add debug symbols to device code
 # this disables most optimizations and kills performance
@@ -23,14 +23,17 @@ include_directories(${PROJECT_SOURCE_DIR}/src)
 aux_source_directory(${PROJECT_SOURCE_DIR}/src SRC)
 
 # generate executable
-add_executable(sgemm sgemm.cu ${SRC})
+add_executable(sgemm sgemm.cu ${SRC}
+        src/kernels/13_kernel_tensor_cores.cuh)
 set_target_properties(sgemm PROPERTIES CUDA_ARCHITECTURES ${CUDA_COMPUTE_CAPABILITY})
 target_link_libraries(sgemm ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES})
 
-add_executable(cuBLAS_sgemm cuBLAS_sgemm.cu )
+add_executable(cuBLAS_sgemm cuBLAS_sgemm.cu
+)
 set_target_properties(sgemm PROPERTIES CUDA_ARCHITECTURES ${CUDA_COMPUTE_CAPABILITY})
 target_link_libraries(cuBLAS_sgemm ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES})
 
-add_executable(simplest_kernel simplest_kernel.cu)
+add_executable(simplest_kernel simplest_kernel.cu
+)
 set_target_properties(sgemm PROPERTIES CUDA_ARCHITECTURES ${CUDA_COMPUTE_CAPABILITY})
 target_link_libraries(simplest_kernel ${CUDA_LIBRARIES})

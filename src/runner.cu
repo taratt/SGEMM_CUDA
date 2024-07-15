@@ -578,11 +578,11 @@ void runSgemmDoubleBuffering2(int M, int N, int K, float alpha, float *A,
 }
 void runSgemmTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
                            float beta, float *C) {
-  const uint BK = 32;
+  const uint BK = 4;
 
   if (M >= 128 and N >= 128) {
-    const uint BM = 32;
-    const uint BN = 32;
+    const uint BM = 256;
+    const uint BN = 256;
     dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
     dim3 blockDim((BM * BN) / (WMMA_M * WMMA_N));
     sgemmTensorCores<BM, BN, BK>

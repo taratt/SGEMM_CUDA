@@ -7,27 +7,36 @@
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 #include <mma.h>
+#include "cuda_fp16.h"
 
-using namespace nvcuda::wmma;
 #define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
+#define WMMA_M 16
+#define WMMA_N 16
+#define WMMA_K 16
+#define WARP_SIZE 32
 
-template <const int BM, const int BN, const int BK, const int TM, const int TN>
-__global__ void __launch_bounds__((BM * BN) / (TM * TN), 1)
-    sgemmTensorCores(int M, int N, int K, float alpha, const float *A,
-                     const float *B, float beta, float *C) {
+using namespace nvcuda;
+
+template <const int BM, const int BN, const int BK>
+__global__ void __launch_bounds__((BM * BN) / (WMMA_M * WMMA_N), 1)
+    sgemmTensorCores(int M, int N, int K, float alpha, const __half *A,
+                     const __half *B, float beta, float *C) {
     const uint cRow = blockIdx.y;
     const uint cCol = blockIdx.x;
 
     const uint totalResultsBlocktile = BM * BN;
-    const uint numThreadsBlocktile = totalResultsBlocktile / (TM * TN);
-
+    const uint numThreadsBlocktile = totalResultsBlocktile / (WMMA_M * WMMA_N);
+    printf("BN: %d", BN);
+    printf("BM: %d", BM);
+    printf("BK: %d", BK);
+    printf("numThreadsBlocktile: %d", numThreadsBlocktile);
     assert(numThreadsBlocktile == blockDim.x);
 
-    const int threadCol = threadIdx.x % (BN / TN);
-    const int threadRow = threadIdx.x / (BN / TN);
+    const int threadCol = threadIdx.x % (BN / WMMA_N);
+    const int threadRow = threadIdx.x / (BN / WMMA_N);
 
-    __shared__ float As[BM * BK];
-    __shared__ float Bs[BK * BN];
+    __shared__ __half As[BM * BK];
+    __shared__ __half Bs[BK * BN];
 
     A += cRow * BM * K;
     B += cCol * BN;
@@ -40,11 +49,9 @@ __global__ void __launch_bounds__((BM * BN) / (TM * TN), 1)
     const uint innerColB = threadIdx.x % BN;
     const uint strideB = numThreadsBlocktile / BN;
 
-    fragment<matrix_a, BM, BK, BM, float, row_major> aFrag;
-    fragment<matrix_b, BK, BN, BN, float, col_major> bFrag;
-    fragment<accumulator, BM, BN, BM, float> accFrag;
-
-    fill_fragment(accFrag, 0.0f);
+    float threadResults[WMMA_M * WMMA_N] = {0.0};
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc;
+    wmma::fill_fragment(acc, 0.0f);
 
     for (uint bkIdx = 0; bkIdx < K; bkIdx += BK) {
         for (uint loadOffset = 0; loadOffset < BM; loadOffset += strideA) {
@@ -55,22 +62,28 @@ __global__ void __launch_bounds__((BM * BN) / (TM * TN), 1)
             Bs[(innerRowB + loadOffset) * BN + innerColB] =
                 B[(innerRowB + loadOffset) * N + innerColB];
         }
-        __syncthreads();
 
-        load_matrix_sync(aFrag, As, BK);
-        load_matrix_sync(bFrag, Bs, BK);
-
-        mma_sync(accFrag, aFrag, bFrag, accFrag);
         __syncthreads();
+     //   printf("%d", M);
 
         A += BK;
         B += BK * N;
+
+        wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
+        wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> b_frag;
+
+        wmma::load_matrix_sync(a_frag, As, BK);
+        wmma::load_matrix_sync(b_frag, Bs, BN);
+
+        wmma::mma_sync(acc, a_frag, b_frag, acc);
+        __syncthreads();
     }
 
-    for (int i = 0; i < accFrag.num_elements; i++) {
-        int row = i / TM;
-        int col = i % TN;
-        C[(threadRow * TM + row) * N + threadCol * TN + col] =
-            alpha * accFrag.x[i] + beta * C[(threadRow * TM + row) * N + threadCol * TN + col];
+    for (uint resIdxM = 0; resIdxM < WMMA_M; ++resIdxM) {
+        for (uint resIdxN = 0; resIdxN < WMMA_N; ++resIdxN) {
+            C[(threadRow * WMMA_M + resIdxM) * N + threadCol * WMMA_N + resIdxN] =
+                alpha * acc.x[resIdxM * WMMA_N + resIdxN] +
+                beta * C[(threadRow * WMMA_M + resIdxM) * N + threadCol * WMMA_N + resIdxN];
+        }
     }
 }

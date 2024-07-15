@@ -4,6 +4,12 @@
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
+#include "cuda_fp16.h"
+
+#define WMMA_M 16
+#define WMMA_N 16
+#define WMMA_K 16
+#define WARP_SIZE 32
 
 float get_sec() {
   struct timeval time;
@@ -64,6 +70,19 @@ void randomize_matrix(float *mat, int N) {
   }
 }
 
+void randomize_matrix_hf(__half *mat, int N) {
+  // NOTICE: Use gettimeofday instead of srand((unsigned)time(NULL)); the time
+  // precision is too low and the same random number is generated.
+  struct timeval time {};
+  gettimeofday(&time, nullptr);
+  srand(time.tv_usec);
+  for (int i = 0; i < N; i++) {
+    float tmp = (float)(rand() % 5) + 0.01 * (rand() % 5);
+    tmp = (rand() % 2 == 0) ? tmp : tmp * (-1.);
+    mat[i] = __float2half(tmp);
+  }
+}
+
 void range_init_matrix(float *mat, int N) {
   for (int i = 0; i < N; i++) {
     mat[i] = i;
@@ -84,6 +103,7 @@ void copy_matrix(const float *src, float *dest, int N) {
     printf("copy failed at %d while there are %d elements in total.\n", i, N);
 }
 
+
 void print_matrix(const float *A, int M, int N, std::ofstream &fs) {
   int i;
   fs << std::setprecision(2)
@@ -94,6 +114,26 @@ void print_matrix(const float *A, int M, int N, std::ofstream &fs) {
       fs << std::setw(5) << A[i]; // Set field width and write the value
     else
       fs << std::setw(5) << A[i] << ", ";
+    if ((i + 1) % N == 0) {
+      if (i + 1 < M * N)
+        fs << ";\n";
+    }
+  }
+  fs << "]\n";
+}
+
+void print_matrix_hf(const __half *A, int M, int N, std::ofstream &fs) {
+  int i;
+  fs << std::setprecision(2)
+     << std::fixed; // Set floating-point precision and fixed notation
+  fs << "[";
+  for (i = 0; i < M * N; i++) {
+    // Convert __half to float before streaming
+    float val = __half2float(A[i]);
+    if ((i + 1) % N == 0)
+      fs << std::setw(5) << val; // Set field width and write the value
+    else
+      fs << std::setw(5) << val << ", ";
     if ((i + 1) % N == 0) {
       if (i + 1 < M * N)
         fs << ";\n";
@@ -114,6 +154,34 @@ bool verify_matrix(float *matRef, float *matOut, int N) {
     }
   }
   return true;
+}
+
+bool verify_matrix_hf(__half *matRef, __half *matOut, int N) {
+  double diff = 0.0;
+  int i;
+  for (i = 0; i < N; i++) {
+    diff = std::fabs(__half2float(matRef[i] - matOut[i]));
+    if (diff > 0.01) {
+      printf("Divergence! Should %5.2f, Is %5.2f (Diff %5.2f) at %d\n",
+             __half2float(matRef[i]), __half2float(matOut[i]), diff, i);
+      return false;
+    }
+  }
+  return true;
+}
+
+void float_array_to_half(__half * half_mat, float * float_mat, int size) {
+  int i;
+  for (i = 0; i < size; i++) {
+    half_mat[i] = __float2half(float_mat[i]);
+  }
+}
+
+void half_array_to_float(__half * half_mat, float * float_mat, int size) {
+  int i;
+  for (i = 0; i < size; i++) {
+    float_mat[i] = __half2float(half_mat[i]);
+  }
 }
 
 int div_ceil(int numerator, int denominator) {
@@ -138,6 +206,14 @@ void runCublasBF16(cublasHandle_t handle, int M, int N, int K, float alpha,
   cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_32F,
                N, A, CUDA_R_32F, K, &beta, C, CUDA_R_32F, N,
                CUBLAS_COMPUTE_32F_FAST_16BF, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+}
+
+void runCublasFP16(cublasHandle_t handle, int M, int N, int K, float alpha,
+                   __half *A, __half *B, float beta, float *C) {
+
+  cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_16F,
+               N, A, CUDA_R_16F, K, &beta, C, CUDA_R_32F, N, CUBLAS_COMPUTE_32F,
+               CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 }
 
 void runCublasTF32(cublasHandle_t handle, int M, int N, int K, float alpha,
@@ -500,17 +576,16 @@ void runSgemmDoubleBuffering2(int M, int N, int K, float alpha, float *A,
                            K12_TM, K12_TN, K12_NUM_THREADS>
       <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
 }
-void runSgemmTensorCore(int M, int N, int K, float alpha, float *A, float *B,
+void runSgemmTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
                            float beta, float *C) {
-  const uint BK = 8;
-  const uint TM = 8;
-  const uint TN = 8;
+  const uint BK = 32;
+
   if (M >= 128 and N >= 128) {
-    const uint BM = 128;
-    const uint BN = 128;
+    const uint BM = 32;
+    const uint BN = 32;
     dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-    dim3 blockDim((BM * BN) / (TM * TN));
-    sgemmTensorCores<BM, BN, BK, TM, TN>
+    dim3 blockDim((BM * BN) / (WMMA_M * WMMA_N));
+    sgemmTensorCores<BM, BN, BK>
         <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
   } else {
     // this is a hacky solution to the underlying problem
@@ -518,8 +593,8 @@ void runSgemmTensorCore(int M, int N, int K, float alpha, float *A, float *B,
     const uint BM = 64;
     const uint BN = 64;
     dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-    dim3 blockDim((BM * BN) / (TM * TN));
-    sgemmTensorCores<BM, BN, BK, TM, TN>
+    dim3 blockDim((BM * BN) / (WMMA_M * WMMA_N));
+    sgemmTensorCores<BM, BN, BK>
         <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
   }
 }
@@ -565,10 +640,21 @@ void run_kernel(int kernel_num, int M, int N, int K, float alpha, float *A,
   case 12:
     runSgemmDoubleBuffering2(M, N, K, alpha, A, B, beta, C);
     break;
-  case 13:
-    runSgemmTensorCore(M, N, K, alpha, A, B, beta, C);
-    break;
   default:
     throw std::invalid_argument("Unknown kernel number");
+  }
+}
+
+void run_tensor_core_kernel(int kernel_num, int M, int N, int K, float alpha, __half *A,
+                __half *B, float beta, float *C, cublasHandle_t handle) {
+  switch (kernel_num) {
+    case 0:
+      runCublasFP16(handle, M, N, K, alpha, A, B, beta, C);
+      break;
+    case 13:
+      runSgemmTensorCore(M, N, K, alpha, A, B, beta, C);
+      break;
+    default:
+      throw std::invalid_argument("Unknown kernel number");
   }
 }

@@ -27,6 +27,7 @@ __global__ void __launch_bounds__((BM * BN) / (WMMA_M * WMMA_N), 1)
     const uint cCol = blockIdx.x;
     const uint totalResultsBlocktile = BM * BN;
     const uint numThreadsBlocktile = totalResultsBlocktile / (WMMA_M * WMMA_N);
+    const uint numWarpBlocktile = numThreadsBlocktile / WARPSIZE;
 
     assert(numThreadsBlocktile == blockDim.x);
 
@@ -50,9 +51,11 @@ __global__ void __launch_bounds__((BM * BN) / (WMMA_M * WMMA_N), 1)
 
     const uint strideA = numThreadsBlocktile / BK;
      uint strideB = numThreadsBlocktile / BN;
-    if (strideB == 0)
-        strideB = 1;
 
+    const int threadCol = threadIdx.x % (BN / WMMA_N);
+    const int threadRow = threadIdx.x / (BN / WMMA_N);
+
+    const int threadWarp = threadIdx.x / WARPSIZE;
 
     //initialize the warp-level fragments
     wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, __half, wmma::row_major> a_frag;
@@ -88,21 +91,24 @@ __global__ void __launch_bounds__((BM * BN) / (WMMA_M * WMMA_N), 1)
             // wmma::mma_sync(acc, a_frag, b_frag, acc);
             // __syncthreads();
 
-        for (int i = 0; i < BK; i += WMMA_K) {
-             wmma::load_matrix_sync(a_frag, As + i, BK);
-             wmma::load_matrix_sync(b_frag, Bs + i * BN, BN);
+        for (int warplocind = 0; warplocind < BM/numWarpBlocktile; warplocind += WMMA_M) {
+            for(int warpcol = 0; warpcol < BN/numWarpBlocktile; warpcol+=WMMA_N){
+                for (int i = 0; i < BK; i += WMMA_K) {
+                    wmma::load_matrix_sync(a_frag, As + (threadWarp) + i, BK);
+                    wmma::load_matrix_sync(b_frag, Bs + i * BN, BN);
 
-             wmma::mma_sync(acc, a_frag, b_frag, acc);
+                    wmma::mma_sync(acc, a_frag, b_frag, acc);
+                }
+                wmma::store_matrix_sync(C + cRow + cCol * ldc, acc, ldc, wmma::mem_row_major);
+            }
         }
-
         // Synchronize to make sure the multiplication is done before loading new tiles
         __syncthreads();
 
 
     }
 
-    const int threadCol = threadIdx.x % (BN / WMMA_N);
-    const int threadRow = threadIdx.x / (BN / WMMA_N);
+
 
     // for (uint resIdxM = 0; resIdxM < WMMA_M; ++resIdxM) {
     //     for (uint resIdxN = 0; resIdxN < WMMA_N; ++resIdxN) {

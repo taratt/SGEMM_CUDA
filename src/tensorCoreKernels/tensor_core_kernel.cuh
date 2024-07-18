@@ -56,7 +56,7 @@ __global__ void __launch_bounds__((BM * BN) / (WMMA_M * WMMA_N), 1)
     const int threadRow = threadIdx.x / (BN / WMMA_N);
 
     const int threadWarp = threadIdx.x / WARPSIZE;
-
+    printf("%d  \n", threadWarp);
     //initialize the warp-level fragments
     wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, __half, wmma::row_major> a_frag;
     wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, __half, wmma::row_major> b_frag;
@@ -94,12 +94,12 @@ __global__ void __launch_bounds__((BM * BN) / (WMMA_M * WMMA_N), 1)
         for (int warplocind = 0; warplocind < BM/numWarpBlocktile; warplocind += WMMA_M) {
             for(int warpcol = 0; warpcol < BN/numWarpBlocktile; warpcol+=WMMA_N){
                 for (int i = 0; i < BK; i += WMMA_K) {
-                    wmma::load_matrix_sync(a_frag, As + (threadWarp) + i, BK);
+                    wmma::load_matrix_sync(a_frag, As + i, BK);
                     wmma::load_matrix_sync(b_frag, Bs + i * BN, BN);
 
                     wmma::mma_sync(acc, a_frag, b_frag, acc);
                 }
-                wmma::store_matrix_sync(C + cRow + cCol * ldc, acc, ldc, wmma::mem_row_major);
+               // wmma::store_matrix_sync(C + cRow + cCol * ldc, acc, ldc, wmma::mem_row_major);
             }
         }
         // Synchronize to make sure the multiplication is done before loading new tiles

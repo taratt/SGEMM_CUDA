@@ -582,7 +582,7 @@ void runSgemmTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
 
   if (M >= 128 and N >= 128) {
     const uint BM = 256;
-    const uint BN = 256;
+    const uint BN = 128;
     dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
     dim3 blockDim((BM * BN) / (WMMA_M * WMMA_N));
     sgemmTensorCores<BM, BN, BK>
@@ -592,10 +592,10 @@ void runSgemmTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
     // of not having proper bounds checking in the kernel
     const uint BM = 64;
     const uint BN = 64;
-    // dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-    // dim3 blockDim((BM * BN) / (WMMA_M * WMMA_N));
-        dim3 blockDim(32, 8);
-    dim3 gridDim(CEIL_DIV(N, 16), CEIL_DIV(M, 16));
+    dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
+    dim3 blockDim((BM * BN) / (WMMA_M * WMMA_N));
+    //     dim3 blockDim(32, 8);
+    // dim3 gridDim(CEIL_DIV(N, 16), CEIL_DIV(M, 16));
     sgemmTensorCores<BM, BN, BK>
         <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
   }

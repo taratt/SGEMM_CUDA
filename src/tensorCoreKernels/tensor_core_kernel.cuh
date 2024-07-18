@@ -31,9 +31,12 @@ __global__ void __launch_bounds__((BM * BN) / (WMMA_M * WMMA_N), 1)
     assert(numThreadsBlocktile == blockDim.x);
 
     // Shared memory for sub-matrices
-    extern __shared__ __half shared_mem[];
-    __half *As = shared_mem;
-    __half *Bs = shared_mem + BM * BK;
+    __shared__ __half As[BM * BK];
+    __shared__ __half Bs[BK * BN];
+    // extern __shared__ __half shared_mem[];
+    // __half *As = shared_mem;
+    // __half *Bs = shared_mem + BM * BK;
+    
 
     const __half *A_tile = A + cRow * BM * K;
     const __half *B_tile = B + cCol * BN;
@@ -46,7 +49,9 @@ __global__ void __launch_bounds__((BM * BN) / (WMMA_M * WMMA_N), 1)
     const uint colSharedLoaderB = threadIdx.x % BN;
 
     const uint strideA = numThreadsBlocktile / BK;
-    const uint strideB = numThreadsBlocktile / BN;
+     uint strideB = numThreadsBlocktile / BN;
+    if (strideB == 0)
+        strideB = 1;
 
 
     //initialize the warp-level fragments
@@ -84,10 +89,10 @@ __global__ void __launch_bounds__((BM * BN) / (WMMA_M * WMMA_N), 1)
             // __syncthreads();
 
         for (int i = 0; i < BK; i += WMMA_K) {
-            load_matrix_sync(a_frag, As + i, BK);
-            load_matrix_sync(b_frag, Bs + i * BN, BN);
+             wmma::load_matrix_sync(a_frag, As + i, BK);
+             wmma::load_matrix_sync(b_frag, Bs + i * BN, BN);
 
-            mma_sync(acc, a_frag, b_frag, acc);
+             wmma::mma_sync(acc, a_frag, b_frag, acc);
         }
 
         // Synchronize to make sure the multiplication is done before loading new tiles
@@ -99,15 +104,15 @@ __global__ void __launch_bounds__((BM * BN) / (WMMA_M * WMMA_N), 1)
     const int threadCol = threadIdx.x % (BN / WMMA_N);
     const int threadRow = threadIdx.x / (BN / WMMA_N);
 
-    for (uint resIdxM = 0; resIdxM < WMMA_M; ++resIdxM) {
-        for (uint resIdxN = 0; resIdxN < WMMA_N; ++resIdxN) {
-            uint row = threadRow * WMMA_M + resIdxM;
-            uint col = threadCol * WMMA_N + resIdxN;
-            if (row < BM && col < BN && (cRow * BM + row) < M && (cCol * BN + col) < N) {
-                C_tile[row * N + col] =
-                    alpha * acc.x[resIdxM * WMMA_N + resIdxN] +
-                    beta * C_tile[row * N + col];
-            }
-        }
-    }
+    // for (uint resIdxM = 0; resIdxM < WMMA_M; ++resIdxM) {
+    //     for (uint resIdxN = 0; resIdxN < WMMA_N; ++resIdxN) {
+    //         uint row = threadRow * WMMA_M + resIdxM;
+    //         uint col = threadCol * WMMA_N + resIdxN;
+    //         if (row < BM && col < BN && (cRow * BM + row) < M && (cCol * BN + col) < N) {
+    //             C_tile[row * N + col] =
+    //                 alpha * acc.x[resIdxM * WMMA_N + resIdxN] +
+    //                 beta * C_tile[row * N + col];
+    //         }
+    //     }
+    // }
 }

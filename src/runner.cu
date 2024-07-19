@@ -69,7 +69,11 @@ void randomize_matrix(float *mat, int N) {
     mat[i] = tmp;
   }
 }
-
+void initialize_one_hf(__half *mat, int N) {
+  for (int i = 0; i < N; i++) {
+    mat[i] = __float2half(1.0);
+  }
+}
 void randomize_matrix_hf(__half *mat, int N) {
   // NOTICE: Use gettimeofday instead of srand((unsigned)time(NULL)); the time
   // precision is too low and the same random number is generated.
@@ -600,6 +604,24 @@ void runSgemmTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
         <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
   }
 }
+void runSgemmNaiveMultiwarpTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
+                           float beta, float *C) {
+  const uint warp_per_block = 4;
+  dim3 blockDim(WARPSIZE * warp_per_block, 1, 1);
+  dim3 gridDim(N / (WMMA_N*warp_per_block), M / (WMMA_M*warp_per_block), 1);
+
+  // Launch the kernel
+  naiveMultiwarpTensorCores<warp_per_block>
+  <<<gridDim, blockDim>>>(A, B, C, M, N, K);
+}
+void runSgemmNaiveTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
+                           float beta, float *C) {
+  dim3 blockDim(32, 1, 1);  // A warp per block
+  dim3 gridDim(N / WMMA_N, M / WMMA_M, 1);
+
+  // Launch the kernel
+  naiveTensorCores<<<gridDim, blockDim>>>(A, B, C, M, N, K);
+}
 void run_kernel(int kernel_num, int M, int N, int K, float alpha, float *A,
                 float *B, float beta, float *C, cublasHandle_t handle) {
   switch (kernel_num) {
@@ -656,6 +678,12 @@ void run_tensor_core_kernel(int kernel_num, int M, int N, int K, float alpha, __
     case 13:
       runSgemmTensorCore(M, N, K, alpha, A, B, beta, C);
       break;
+    case 14:
+      runSgemmNaiveTensorCore(M, N, K, alpha, A, B, beta, C);
+      break;
+    case 15:
+      runSgemmNaiveMultiwarpTensorCore(M, N, K, alpha, A, B, beta, C);
+    break;
     default:
       throw std::invalid_argument("Unknown kernel number");
   }

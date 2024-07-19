@@ -15,6 +15,7 @@ void CudaDeviceInfo();    // print CUDA information
 void range_init_matrix(float *mat, int N);
 void randomize_matrix(float *mat, int N);
 void randomize_matrix_hf(__half *mat, int N);
+void initialize_one_hf(__half *mat, int N);
 void zero_init_matrix(float *mat, int N);
 void copy_matrix(const float *src, float *dest, int N);
 void print_matrix(const float *A, int M, int N, std::ofstream &fs);

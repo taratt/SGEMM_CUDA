@@ -14,3 +14,5 @@
 #include "kernels/9_kernel_autotuned.cuh"
 #include "kernels/9_kernel_autotuned.cuh"
 #include "tensorCoreKernels/tensor_core_kernel.cuh"
+#include "tensorCoreKernels/simple_tensor_core.cuh"
+#include "tensorCoreKernels/simple_tensor_core_multiwarp.cuh"

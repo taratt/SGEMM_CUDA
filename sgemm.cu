@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
 
   // get kernel number
   int kernel_num = std::stoi(argv[1]);
-  if (kernel_num < 0 || kernel_num > 13) {
+  if (kernel_num < 0 || kernel_num > 16) {
     std::cerr << "Please enter a valid kernel number (0-12)" << std::endl;
     exit(EXIT_FAILURE);
   }
@@ -54,7 +54,7 @@ int main(int argc, char **argv) {
 
   // cuBLAS FLOPs ceiling is reached at 8192
   //std::vector<int> SIZE = {128, 256, 512, 1024, 2048, 4096};
-  std::vector<int> SIZE = {2048, 4096};
+  std::vector<int> SIZE = {128, 256, 512,2048, 4096};
   long m, n, k, max_size;
   max_size = SIZE[SIZE.size() - 1];
   std::cout << "Max size: " << max_size << std::endl;
@@ -163,7 +163,7 @@ int main(int argc, char **argv) {
   cudaFree(dC_ref);
   cublasDestroy(handle);
   }
-  if (kernel_num == 13) {
+  if (kernel_num >= 13) {
     __half *A = nullptr, *B = nullptr;
     float *C = nullptr, *C_ref = nullptr; // host matrices
     __half *dA = nullptr, *dB = nullptr;
@@ -180,8 +180,10 @@ int main(int argc, char **argv) {
     // fA = (float *)malloc(sizeof(float) * max_size * max_size);
     // fB = (float *)malloc(sizeof(float) * max_size * max_size);
 
-    randomize_matrix_hf(A, max_size * max_size);
-    randomize_matrix_hf(B, max_size * max_size);
+    // randomize_matrix_hf(A, max_size * max_size);
+    // randomize_matrix_hf(B, max_size * max_size);
+    initialize_one_hf(A, max_size * max_size);
+    initialize_one_hf(B, max_size * max_size);
     randomize_matrix(C, max_size * max_size);
 
     // half_array_to_float(A, fA, max_size*max_size);
@@ -229,26 +231,26 @@ int main(int argc, char **argv) {
       cudaMemcpy(C, dC, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
       cudaMemcpy(C_ref, dC_ref, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
 
-      // if (!verify_matrix(C_ref, C, m * n)) {
-      //   std::cout
-      //       << "Failed to pass the correctness verification against NVIDIA "
-      //          "cuBLAS."
-      //       << std::endl;
-      //   if (m <= 128) {
-      //     std::cout << " Logging faulty output into " << errLogFile << "\n";
-      //     std::ofstream fs;
-      //     fs.open(errLogFile);
-      //     fs << "A:\n";
-      //     print_matrix_hf(A, m, n, fs);
-      //     fs << "B:\n";
-      //     print_matrix_hf(B, m, n, fs);
-      //     fs << "C:\n";
-      //     print_matrix(C, m, n, fs);
-      //     fs << "Should:\n";
-      //     print_matrix(C_ref, m, n, fs);
-      //   }
-      //   exit(EXIT_FAILURE);
-      // }
+      if (!verify_matrix(C_ref, C, m * n)) {
+        std::cout
+            << "Failed to pass the correctness verification against NVIDIA "
+               "cuBLAS."
+            << std::endl;
+        if (m <= 128) {
+          std::cout << " Logging faulty output into " << errLogFile << "\n";
+          std::ofstream fs;
+          fs.open(errLogFile);
+          fs << "A:\n";
+          print_matrix_hf(A, m, n, fs);
+          fs << "B:\n";
+          print_matrix_hf(B, m, n, fs);
+          fs << "C:\n";
+          print_matrix(C, m, n, fs);
+          fs << "Should:\n";
+          print_matrix(C_ref, m, n, fs);
+        }
+        exit(EXIT_FAILURE);
+      }
     }
 
     cudaEventRecord(beg);

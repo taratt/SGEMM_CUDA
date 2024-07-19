@@ -1,16 +1,23 @@
+#pragma once
+
+#include <algorithm>
+#include <cassert>
 #include <cstdio>
 #include <cstdlib>
-#include <mma.h>
+#include <cublas_v2.h>
 #include <cuda_runtime.h>
-#include <cuda_fp16.h>
+#include <mma.h>
+#include "cuda_fp16.h"
+
 
 #define WMMA_M 16
 #define WMMA_N 16
 #define WMMA_K 16
-
+#define WARPSIZE 32
 using namespace nvcuda;
 
-__global__ void naiveTensorCores(const __half *A, const __half *B, float *C, int M, int N, int K) {
+template <const int WARP_PER_TB>
+__global__ void naiveMultiwarpTensorCores(const __half *A, const __half *B, float *C, int M, int N, int K) {
     // Leading dimensions of A and B matrices
     int lda = K;
     int ldb = N;
@@ -23,11 +30,14 @@ __global__ void naiveTensorCores(const __half *A, const __half *B, float *C, int
 
     wmma::fill_fragment(acc_frag, 0.0f);
 
-    // Calculate the row and column of the C matrix to be computed by this thread block which is also a warp
-    int row = blockIdx.y * WMMA_M;
-    int col = blockIdx.x * WMMA_N;
+    // Calculate the row and column of the C matrix to be computed by this warp
+    int row = blockIdx.y * WMMA_M * WARP_PER_TB / 2 + (threadIdx.x /WARPSIZE)/2 ;
+    int col = blockIdx.x * WMMA_N * WARP_PER_TB / 2 + (threadIdx.x /WARPSIZE)%2;
+
+    printf("%d %d \n", row, col);
 
     // Loop over the K dimension to calculate partial results
+
     for (int i = 0; i < K; i += WMMA_K) {
 
         wmma::load_matrix_sync(a_frag, A + row * lda + i, lda);

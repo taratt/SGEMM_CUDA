@@ -621,6 +621,16 @@ void runSgemmNaiveTensorCore(int M, int N, int K, float alpha, __half *A, __half
 
   // Launch the kernel
   naiveTensorCores<<<gridDim, blockDim>>>(A, B, C, M, N, K);
+
+}
+void runSgemmSharedMemTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
+                           float beta, float *C) {
+  dim3 blockDim(32, 1, 1);  // A warp per block
+  dim3 gridDim(N / WMMA_N, M / WMMA_M, 1);
+  const int BS = 16;
+  // Launch the kernel
+  smemTensorCores<BS>
+  <<<gridDim, blockDim>>>(A, B, C, M, N, K);
 }
 void run_kernel(int kernel_num, int M, int N, int K, float alpha, float *A,
                 float *B, float beta, float *C, cublasHandle_t handle) {
@@ -683,6 +693,9 @@ void run_tensor_core_kernel(int kernel_num, int M, int N, int K, float alpha, __
       break;
     case 15:
       runSgemmNaiveMultiwarpTensorCore(M, N, K, alpha, A, B, beta, C);
+    break;
+    case 16:
+      runSgemmSharedMemTensorCore(M, N, K, alpha, A, B, beta, C);
     break;
     default:
       throw std::invalid_argument("Unknown kernel number");

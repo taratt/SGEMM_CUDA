@@ -31,10 +31,11 @@ __global__ void naiveMultiwarpTensorCores(const __half *A, const __half *B, floa
     wmma::fill_fragment(acc_frag, 0.0f);
 
     // Calculate the row and column of the C matrix to be computed by this warp
-    int row = blockIdx.y * WMMA_M * WARP_PER_TB / 2 + (threadIdx.x /WARPSIZE)/2 ;
-    int col = blockIdx.x * WMMA_N * WARP_PER_TB / 2 + (threadIdx.x /WARPSIZE)%2;
+    int row = blockIdx.y * WMMA_N * WARP_PER_TB/2  + (threadIdx.x /WARPSIZE)/2 * WMMA_N  ;
+    int col = blockIdx.x * WMMA_M * WARP_PER_TB/2  + (threadIdx.x /WARPSIZE)%2 * WMMA_N;
 
-    printf("%d %d \n", row, col);
+    //if (blockIdx.x && blockIdx.y ==0 && threadIdx.x%32==0)
+//printf("%d %d \n", row, col);
 
     // Loop over the K dimension to calculate partial results
 

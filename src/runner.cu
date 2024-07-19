@@ -608,7 +608,7 @@ void runSgemmNaiveMultiwarpTensorCore(int M, int N, int K, float alpha, __half *
                            float beta, float *C) {
   const uint warp_per_block = 4;
   dim3 blockDim(WARPSIZE * warp_per_block, 1, 1);
-  dim3 gridDim(N / (WMMA_N*warp_per_block), M / (WMMA_M*warp_per_block), 1);
+  dim3 gridDim(2*N / (WMMA_N*warp_per_block), 2*M / (WMMA_M*warp_per_block), 1);
 
   // Launch the kernel
   naiveMultiwarpTensorCores<warp_per_block>

@@ -74,6 +74,33 @@ void initialize_one_hf(__half *mat, int N) {
     mat[i] = __float2half(1.0);
   }
 }
+void initialize_incremental_hf(__half *mat, int N) {
+  for (int i = 0; i < N; i++) {
+    int tmp = i/64;
+    mat[i] = static_cast<half>(tmp);
+  }
+}
+void initialize_identity_hf(__half *mat, int N) {
+  for (int i = 0; i < N; ++i) {
+    for (int j = 0; j < N; ++j) {
+      if (i == j) {
+        mat[i * N + j] = __float2half(1.0);
+      } else {
+        mat[i * N + j] = __float2half(0.0);
+      }
+    }
+  }
+}
+void initialize_incremental_float(float *mat, int N) {
+  for (int i = 0; i < N; i++) {
+    mat[i] = (float)(i);
+  }
+}
+void initialize_one_float(float *mat, int N) {
+  for (int i = 0; i < N; i++) {
+    mat[i] = 1.0;
+  }
+}
 void randomize_matrix_hf(__half *mat, int N) {
   // NOTICE: Use gettimeofday instead of srand((unsigned)time(NULL)); the time
   // precision is too low and the same random number is generated.
@@ -604,6 +631,30 @@ void runSgemmTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
         <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
   }
 }
+void runSgemmTensorCore2(int M, int N, int K, float alpha, __half *A, __half *B,
+                           float beta, float *C) {
+  const uint BK = 16;
+
+  if (M >= 128 and N >= 128) {
+    const uint BM = 256;
+    const uint BN = 256;
+    dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
+    dim3 blockDim((4*BM * BN) / (WMMA_M * WMMA_N));
+    sgemmTensorCores2<BM, BN, BK>
+        <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+  } else {
+    // this is a hacky solution to the underlying problem
+    // of not having proper bounds checking in the kernel
+    const uint BM = 64;
+    const uint BN = 64;
+    dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
+    dim3 blockDim((32*BM * BN) / (WMMA_M * WMMA_N));
+    //     dim3 blockDim(32, 8);
+    // dim3 gridDim(CEIL_DIV(N, 16), CEIL_DIV(M, 16));
+    sgemmTensorCores2<BM, BN, BK>
+        <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+  }
+}
 void runSgemmNaiveMultiwarpTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
                            float beta, float *C) {
   const uint warp_per_block = 4;
@@ -623,15 +674,7 @@ void runSgemmNaiveTensorCore(int M, int N, int K, float alpha, __half *A, __half
   naiveTensorCores<<<gridDim, blockDim>>>(A, B, C, M, N, K);
 
 }
-void runSgemmSharedMemTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
-  dim3 blockDim(32, 1, 1);  // A warp per block
-  dim3 gridDim(N / WMMA_N, M / WMMA_M, 1);
-  const int BS = 16;
-  // Launch the kernel
-  smemTensorCores<BS>
-  <<<gridDim, blockDim>>>(A, B, C, M, N, K);
-}
+
 void run_kernel(int kernel_num, int M, int N, int K, float alpha, float *A,
                 float *B, float beta, float *C, cublasHandle_t handle) {
   switch (kernel_num) {
@@ -695,7 +738,7 @@ void run_tensor_core_kernel(int kernel_num, int M, int N, int K, float alpha, __
       runSgemmNaiveMultiwarpTensorCore(M, N, K, alpha, A, B, beta, C);
     break;
     case 16:
-      runSgemmSharedMemTensorCore(M, N, K, alpha, A, B, beta, C);
+      runSgemmTensorCore2(M, N, K, alpha, A, B, beta, C);
     break;
     default:
       throw std::invalid_argument("Unknown kernel number");

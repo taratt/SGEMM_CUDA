@@ -639,7 +639,7 @@ void runSgemmTensorCore2(int M, int N, int K, float alpha, __half *A, __half *B,
     const uint BM = 256;
     const uint BN = 256;
     dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-    dim3 blockDim((4*BM * BN) / (WMMA_M * WMMA_N));
+    dim3 blockDim((2*BM * BN) / (WMMA_M * WMMA_N));
     sgemmTensorCores2<BM, BN, BK>
         <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
   } else {

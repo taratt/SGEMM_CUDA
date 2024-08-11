@@ -633,13 +633,12 @@ void runSgemmTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
 }
 void runSgemmTensorCore2(int M, int N, int K, float alpha, __half *A, __half *B,
                            float beta, float *C) {
-  const uint BK = 16;
-
+  const uint BK = 64;
   if (M >= 128 and N >= 128) {
-    const uint BM = 256;
-    const uint BN = 256;
+    const uint BM = 128;
+    const uint BN = 128;
     dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-    dim3 blockDim((2*BM * BN) / (WMMA_M * WMMA_N));
+    dim3 blockDim((16*BM * BN) / (WMMA_M * WMMA_N));
     sgemmTensorCores2<BM, BN, BK>
         <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
   } else {
@@ -655,6 +654,42 @@ void runSgemmTensorCore2(int M, int N, int K, float alpha, __half *A, __half *B,
         <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
   }
 }
+void runSgemmVectorizedTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
+                           float beta, float *C) {
+    const uint BK = 32;
+    const uint BM = 128;
+    const uint BN = 128;
+    dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
+    dim3 blockDim((16*BM * BN) / (WMMA_M * WMMA_N));
+    runSgemmVectorizedTensorCore<BM, BN, BK>
+        <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+
+}
+
+void runSgemmVectorizedTensorCore2(int M, int N, int K, float alpha, __half *A, __half *B,
+                           float beta, float *C) {
+  const uint BK = 64;
+  const uint BM = 128;
+  const uint BN = 128;
+  dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
+  dim3 blockDim((16*BM * BN) / (WMMA_M * WMMA_N));
+  runSgemmVectorizedTensorCore2<BM, BN, BK>
+      <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+
+}
+
+void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
+                           float beta, float *C) {
+  const uint BK = 32;
+  const uint BM = 128;
+  const uint BN = 128;
+  dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
+  dim3 blockDim((16*BM * BN) / (WMMA_M * WMMA_N));
+  runSgemmDoubleBufferingTensorCore<BM, BN, BK>
+      <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+
+}
+
 void runSgemmNaiveMultiwarpTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
                            float beta, float *C) {
   const uint warp_per_block = 4;
@@ -736,10 +771,19 @@ void run_tensor_core_kernel(int kernel_num, int M, int N, int K, float alpha, __
       break;
     case 15:
       runSgemmNaiveMultiwarpTensorCore(M, N, K, alpha, A, B, beta, C);
-    break;
+      break;
     case 16:
       runSgemmTensorCore2(M, N, K, alpha, A, B, beta, C);
-    break;
+      break;
+    case 17:
+      runSgemmVectorizedTensorCore(M, N, K, alpha, A, B, beta, C);
+      break;
+    case 18:
+      runSgemmVectorizedTensorCore2(M, N, K, alpha, A, B, beta, C);
+      break;
+    case 19:
+      runSgemmDoubleBufferingTensorCore(M, N, K, alpha, A, B, beta, C);
+      break;
     default:
       throw std::invalid_argument("Unknown kernel number");
   }

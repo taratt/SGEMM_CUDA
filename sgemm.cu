@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
 
   // get kernel number
   int kernel_num = std::stoi(argv[1]);
-  if (kernel_num < 0 || kernel_num > 16) {
+  if (kernel_num < 0 || kernel_num > 25) {
     std::cerr << "Please enter a valid kernel number (0-12)" << std::endl;
     exit(EXIT_FAILURE);
   }
@@ -54,8 +54,8 @@ int main(int argc, char **argv) {
   cudaEventCreate(&end);
 
   // cuBLAS FLOPs ceiling is reached at 8192
-  //std::vector<int> SIZE = {128, 256, 512, 1024, 2048, 4096};
-  std::vector<int> SIZE = {256, 512,1024,2048, 4096, 8192, 16384};
+  std::vector<int> SIZE = { 256, 512, 1024, 2048, 4096};
+  //std::vector<int> SIZE = {256, 512,1024,2048, 4096, 8192, 16384};
   long m, n, k, max_size;
   max_size = SIZE[SIZE.size() - 1];
   std::cout << "Max size: " << max_size << std::endl;
@@ -183,8 +183,8 @@ int main(int argc, char **argv) {
 
     // randomize_matrix_hf(A, max_size * max_size);
     // randomize_matrix_hf(B, max_size * max_size);
-    initialize_one_hf(A, max_size * max_size);
-    initialize_one_hf(B, max_size * max_size);
+    initialize_incremental_hf(A, max_size * max_size);
+    randomize_matrix_hf(B, max_size * max_size);
     initialize_one_float(C, max_size * max_size);
 
     // half_array_to_float(A, fA, max_size*max_size);

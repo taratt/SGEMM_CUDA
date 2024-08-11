@@ -20,7 +20,7 @@
 using namespace nvcuda;
 
 template <const int BM, const int BN, const int BK>
-__global__ void __launch_bounds__((2*BM * BN) / (WMMA_M * WMMA_N), 1)
+__global__ void __launch_bounds__((16*BM * BN) / (WMMA_M * WMMA_N), 1)
     sgemmTensorCores2(int M, int N, int K, float alpha, const __half *A,
                      const __half *B, float beta, float *C) {
     // Determine block index and thread index
@@ -35,10 +35,6 @@ __global__ void __launch_bounds__((2*BM * BN) / (WMMA_M * WMMA_N), 1)
     // Shared memory for sub-matrices
     __shared__ __half As[BM * BK];
     __shared__ __half Bs[BK * BN];
-    // extern __shared__ __half shared_mem[];
-    // __half *As = shared_mem;
-    // __half *Bs = shared_mem + BM * BK;
-
 
     A += cRow * BM * K;
     B += cCol * BN;
@@ -70,18 +66,14 @@ __global__ void __launch_bounds__((2*BM * BN) / (WMMA_M * WMMA_N), 1)
      wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc[16];
      for (int i =0; i<16; i++)
          wmma::fill_fragment(acc[i], 0.0f);
-    __half threadResults[WMMA_M * WMMA_N] = {0.0};
+    __half threadResults[BM * BN] = {0.0};
 
     for (uint bkIdx = 0; bkIdx < K; bkIdx += BK) {
         if (threadIdx.x < numThreadsBlocktile) {
             for (uint loadOffset = 0; loadOffset < BM; loadOffset += strideA) {
-                // if ((rowSharedLoaderA + loadOffset) < BM && colSharedLoaderA < BK) {
-                // if( loadOffset==240 &&  bkIdx==0)
-                //     printf("%d: %d %d\n", threadIdx.x,rowSharedLoaderA + loadOffset, colSharedLoaderA);
                 As[(rowSharedLoaderA + loadOffset) * BK + colSharedLoaderA] =
                     A[(rowSharedLoaderA + loadOffset) * K + colSharedLoaderA];
 
-                // }
             }
             for (uint loadOffset = 0; loadOffset < BK; loadOffset += strideB) {
                 // if ((rowSharedLoaderB + loadOffset) < BK && colSharedLoaderB < BN) {

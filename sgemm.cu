@@ -54,7 +54,7 @@ int main(int argc, char **argv) {
   cudaEventCreate(&end);
 
   // cuBLAS FLOPs ceiling is reached at 8192
-  std::vector<int> SIZE = { 256, 512, 1024, 2048, 4096};
+  std::vector<int> SIZE = { 256, 512,1024,2048, 4096};
   //std::vector<int> SIZE = {256, 512,1024,2048, 4096, 8192, 16384};
   long m, n, k, max_size;
   max_size = SIZE[SIZE.size() - 1];
@@ -184,7 +184,7 @@ int main(int argc, char **argv) {
     // randomize_matrix_hf(A, max_size * max_size);
     // randomize_matrix_hf(B, max_size * max_size);
     initialize_incremental_hf(A, max_size * max_size);
-    randomize_matrix_hf(B, max_size * max_size);
+    initialize_one_hf(B, max_size * max_size);
     initialize_one_float(C, max_size * max_size);
 
     // half_array_to_float(A, fA, max_size*max_size);
@@ -237,7 +237,7 @@ int main(int argc, char **argv) {
           << "Failed to pass the correctness verification against NVIDIA "
              "cuBLAS."
           << std::endl;
-      if (m <= 256) {
+      if (m <= 4096) {
         std::cout << " Logging faulty output into " << errLogFile << "\n";
         std::ofstream fs;
         fs.open(errLogFile);

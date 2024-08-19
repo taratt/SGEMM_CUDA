@@ -24,8 +24,8 @@
 using namespace nvcuda;
 
 template <const int BM, const int BN, const int BK>
-__global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alpha, __half * __restrict__ A,
-                      __half * __restrict__ B, float beta, float * __restrict__ C) {
+__global__ void runSgemmTensorCoreBankConflicts(int M, int N, int K, float alpha, __half *A,
+                      __half *B, float beta, float *C) {
     // Determine block index and thread index
     const uint cRow = blockIdx.y;
     const uint cCol = blockIdx.x;

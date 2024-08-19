@@ -20,4 +20,6 @@
 #include "tensorCoreKernels/vectorized_tensor_core_kernel.cuh"
 #include "tensorCoreKernels/vectorized_tensor_core_kernel2.cuh"
 #include "tensorCoreKernels/tensor_core_double_buffering.cuh"
+#include "tensorCoreKernels/tensor_core_double_buffering_stride3.cuh"
+#include "tensorCoreKernels/tensor_core_resolve_bank_conflicts.cuh"
 #include "tensorCoreKernels/test_kernel.cuh"

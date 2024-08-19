@@ -24,8 +24,8 @@
 using namespace nvcuda;
 
 template <const int BM, const int BN, const int BK>
-__global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alpha, __half * __restrict__ A,
-                      __half * __restrict__ B, float beta, float * __restrict__ C) {
+__global__ void runSgemmDoubleBufferingTensorCoreStride3(int M, int N, int K, float alpha, __half *A,
+                      __half *B, float beta, float *C) {
     // Determine block index and thread index
     const uint cRow = blockIdx.y;
     const uint cCol = blockIdx.x;
@@ -36,8 +36,8 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
     assert(numThreadsBlocktile == blockDim.x);
 
     // Shared memory for sub-matrices
-    __shared__ __half As[2][BM * BK];
-    __shared__ __half Bs[2][BK * BN];
+    __shared__ __half As[3][BM * BK];
+    __shared__ __half Bs[3][BK * BN];
 
     A += cRow * BM * K;
     B += cCol * BN;
@@ -71,13 +71,13 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> accs[2];
 
 #pragma unroll
-    for (int i =0; i<2; i++)
+    for (int i =0; i<3; i++)
         wmma::fill_fragment(accs[i], 0.0f);
 
 
     cuda::pipeline<cuda::thread_scope_thread> pipe = cuda::make_pipeline();
 
-    for (int stage = 0; stage < 2; ++stage) {
+    for (int stage = 0; stage < 3; ++stage) {
         pipe.producer_acquire();
         if (threadIdx.x < numAsElements/8) {
             cuda::memcpy_async(
@@ -111,7 +111,7 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
 
     int stage = 0;
     for (uint bkIdx = 0; bkIdx < K; bkIdx += BK) {
-        cuda::pipeline_consumer_wait_prior<1>(pipe);
+        cuda::pipeline_consumer_wait_prior<2>(pipe);
 
         __syncthreads();
         // if (threadIdx.x==0 && blockIdx.x ==0 && blockIdx.y==0 && bkIdx==0) {
@@ -170,7 +170,7 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
             else if (threadIdx.x >= numAsElements/8 && threadIdx.x < (numAsElements + numBsElements)/8)
                 B += BK * N;
 
-            stage = (stage + 1) % 2;
+            stage = (stage + 1) % 3;
         }
     }
         wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + warpCol * numColSpanBN * WMMA_N, accs[0], N, wmma::mem_row_major);

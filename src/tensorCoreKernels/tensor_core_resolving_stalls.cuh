@@ -24,14 +24,14 @@
 using namespace nvcuda;
 
 template <const int BM, const int BN, const int BK>
-__global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alpha, __half * __restrict__ A,
+__global__ void runSgemmResolvingStallsTensorCore(int M, int N, int K, float alpha, __half * __restrict__ A,
                       __half * __restrict__ B, float beta, float * __restrict__ C) {
     // Determine block index and thread index
     const uint cRow = blockIdx.y;
     const uint cCol = blockIdx.x;
     const uint totalResultsBlocktile = BM * BN;
     const uint numThreadsBlocktile = 16*totalResultsBlocktile / (WMMA_M * WMMA_N);
-    const uint numWarpBlocktile = numThreadsBlocktile / WARPSIZE;
+    const uint numWarpBlocktile = (numThreadsBlocktile / WARPSIZE)/2;
 
     assert(numThreadsBlocktile == blockDim.x);
 
@@ -65,17 +65,16 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
     int warpCol = threadWarp % numWarpSpanBN;
 
     // if (threadIdx.x==1 && blockIdx.x ==0 && blockIdx.y==0)
-    //     printf("He %d", numWarpSpanBN);
+    //     printf("He %d \n", numColSpanBN);
 
     //initialize the warp-level fragments
     wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, __half, wmma::row_major> a_frag;
     wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, __half, wmma::row_major> b_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> accs[2];
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> accs[4];
 
 #pragma unroll
-    for (int i =0; i<2; i++)
+    for (int i =0; i<numColSpanBN; i++)
         wmma::fill_fragment(accs[i], 0.0f);
-
 
     cuda::pipeline<cuda::thread_scope_thread> pipe = cuda::make_pipeline();
 
@@ -125,7 +124,7 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
         //     }
         // }
 
-
+        if (threadIdx.x < 512)
         for (int i = 0; i < BK; i += WMMA_K) {
             wmma::load_matrix_sync(a_frag, As[stage] + (warpRow * WMMA_M) * BK + i , BK);
             wmma::load_matrix_sync(b_frag, Bs[stage] + i* BN + warpCol * numColSpanBN * WMMA_N , BN);
@@ -133,6 +132,12 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
 
             wmma::load_matrix_sync(b_frag, Bs[stage] + i* BN + (warpCol * numColSpanBN +1 )* WMMA_N  , BN);
             wmma::mma_sync(accs[1], a_frag, b_frag, accs[1]);
+
+            wmma::load_matrix_sync(b_frag, Bs[stage] + i* BN + (warpCol * numColSpanBN +2 )* WMMA_N  , BN);
+            wmma::mma_sync(accs[2], a_frag, b_frag, accs[2]);
+
+            wmma::load_matrix_sync(b_frag, Bs[stage] + i* BN + (warpCol * numColSpanBN +3 )* WMMA_N  , BN);
+            wmma::mma_sync(accs[3], a_frag, b_frag, accs[3]);
         }
 
         __syncthreads();
@@ -175,7 +180,11 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
             stage = (stage + 1) % 2;
         }
     }
+    if (threadIdx.x < 512) {
         wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + warpCol * numColSpanBN * WMMA_N, accs[0], N, wmma::mem_row_major);
         wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + (warpCol * numColSpanBN + 1) * WMMA_N, accs[1], N, wmma::mem_row_major);
+        wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + (warpCol * numColSpanBN + 2) * WMMA_N, accs[2], N, wmma::mem_row_major);
+        wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + (warpCol * numColSpanBN + 3) * WMMA_N, accs[3], N, wmma::mem_row_major);
 
+    }
 }

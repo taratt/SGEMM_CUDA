@@ -713,7 +713,17 @@ void runSgemmTensorCoreBankConflicts(int M, int N, int K, float alpha, __half *A
       <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
 
 }
+void runSgemmTensorCoreResolveStall(int M, int N, int K, float alpha, __half *A, __half *B,
+                           float beta, float *C) {
+  const uint BK = 32;
+  const uint BM = 128;
+  const uint BN = 128;
+  dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
+  dim3 blockDim((16*BM * BN) / (WMMA_M * WMMA_N));
+  runSgemmResolvingStallsTensorCore<BM, BN, BK>
+      <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
 
+}
 void runSgemmNaiveMultiwarpTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
                            float beta, float *C) {
   const uint warp_per_block = 4;
@@ -813,6 +823,9 @@ void run_tensor_core_kernel(int kernel_num, int M, int N, int K, float alpha, __
       break;
     case 21:
       runSgemmTensorCoreBankConflicts(M, N, K, alpha, A, B, beta, C);
+    break;
+    case 22:
+      runSgemmTensorCoreResolveStall(M, N, K, alpha, A, B, beta, C);
     break;
     default:
       throw std::invalid_argument("Unknown kernel number");

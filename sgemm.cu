@@ -54,7 +54,7 @@ int main(int argc, char **argv) {
   cudaEventCreate(&end);
 
   // cuBLAS FLOPs ceiling is reached at 8192
-  std::vector<int> SIZE = { 256, 512,1024,2048, 4096};
+  std::vector<int> SIZE = {256, 512,1024,2048};
   //std::vector<int> SIZE = {256, 512,1024,2048, 4096, 8192, 16384};
   long m, n, k, max_size;
   max_size = SIZE[SIZE.size() - 1];
@@ -212,7 +212,7 @@ int main(int argc, char **argv) {
     cudaCheck(cudaMemcpy(dC_ref, C, sizeof(float) * max_size * max_size,
                          cudaMemcpyHostToDevice));
 
-      int repeat_times = 50;
+    int repeat_times = 50;
   for (int size : SIZE) {
     m = n = k = size;
 
@@ -253,7 +253,10 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
      }
-
+    for (int j = 0; j < 1000; j++) {
+      // We don't reset dC between runs to save time
+      run_tensor_core_kernel(kernel_num, m, n, k, alpha, dA, dB, beta, dC, handle);
+    }
     cudaEventRecord(beg);
     for (int j = 0; j < repeat_times; j++) {
       // We don't reset dC between runs to save time

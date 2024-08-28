@@ -54,10 +54,11 @@ int main(int argc, char **argv) {
   cudaEventCreate(&end);
 
   // cuBLAS FLOPs ceiling is reached at 8192
-  std::vector<int> SIZE = {256, 512,1024,2048};
+  std::vector<int> SIZE = {256, 512,1024,2048, 4096};
   //std::vector<int> SIZE = {256, 512,1024,2048, 4096, 8192, 16384};
   long m, n, k, max_size;
-  max_size = SIZE[SIZE.size() - 1];
+ // max_size = SIZE[SIZE.size() - 1];
+  max_size = 8192;
   std::cout << "Max size: " << max_size << std::endl;
 
   float alpha = 1.0, beta = 0.0; // GEMM input parameters, C=α*AB+β*C

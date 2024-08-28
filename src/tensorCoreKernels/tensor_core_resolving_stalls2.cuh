@@ -24,14 +24,14 @@
 using namespace nvcuda;
 
 template <const int BM, const int BN, const int BK>
-__global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alpha, __half * __restrict__ A,
+__global__ void runSgemmResolvingStallsTensorCore2(int M, int N, int K, float alpha, __half * __restrict__ A,
                       __half * __restrict__ B, float beta, float * __restrict__ C) {
     // Determine block index and thread index
     const uint cRow = blockIdx.y;
     const uint cCol = blockIdx.x;
     const uint totalResultsBlocktile = BM * BN;
-    const uint numThreadsBlocktile = 16*totalResultsBlocktile / (WMMA_M * WMMA_N);
-    const uint numWarpBlocktile = numThreadsBlocktile / WARPSIZE;
+    const uint numThreadsBlocktile = 4*totalResultsBlocktile / (WMMA_M * WMMA_N);
+    const uint numWarpBlocktile = (numThreadsBlocktile / WARPSIZE);
 
     assert(numThreadsBlocktile == blockDim.x);
 
@@ -47,11 +47,11 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
     const uint numBsElements = BK * BN;
 
     // Determine the row and column for loading A and B into shared memory
-    const uint rowSharedLoaderA = threadIdx.x / (BK / 8);
-    const uint colSharedLoaderA = threadIdx.x % (BK / 8);
+    const uint rowSharedLoaderA = threadIdx.x / (BK / 32);
+    const uint colSharedLoaderA = threadIdx.x % (BK / 32);
 
-    const uint rowSharedLoaderB = (threadIdx.x - numAsElements/8) / (BN / 8);
-    const uint colSharedLoaderB = (threadIdx.x - numAsElements/8) % (BN / 8);
+    const uint rowSharedLoaderB = (threadIdx.x - numAsElements/32) / (BN / 32);
+    const uint colSharedLoaderB = (threadIdx.x - numAsElements/32) % (BN / 32);
 
 
     const int threadCol = threadIdx.x % (BN / WMMA_N);
@@ -65,27 +65,26 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
     int warpCol = threadWarp % numWarpSpanBN;
 
     // if (threadIdx.x==1 && blockIdx.x ==0 && blockIdx.y==0)
-    //     printf("He %d", numWarpSpanBN);
+    //     printf("He %d \n", numColSpanBN);
 
     //initialize the warp-level fragments
     wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, __half, wmma::row_major> a_frag;
     wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, __half, wmma::row_major> b_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> accs[2];
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> accs[8];
 
 #pragma unroll
-    for (int i =0; i<2; i++)
+    for (int i =0; i<8; i++)
         wmma::fill_fragment(accs[i], 0.0f);
-
 
     cuda::pipeline<cuda::thread_scope_thread> pipe = cuda::make_pipeline();
 
     for (int stage = 0; stage < 2; ++stage) {
         pipe.producer_acquire();
-        if (threadIdx.x < numAsElements/8) {
+        if (threadIdx.x < numAsElements/32) {
             cuda::memcpy_async(
-                reinterpret_cast<float4 *>(&As[stage][rowSharedLoaderA * BK + colSharedLoaderA * 8]),
-                reinterpret_cast<float4 *>(&A[rowSharedLoaderA * K + colSharedLoaderA * 8]),
-                sizeof(float4),
+                reinterpret_cast<float4 *>(&As[stage][rowSharedLoaderA * BK + colSharedLoaderA * 32]),
+                reinterpret_cast<float4 *>(&A[rowSharedLoaderA * K + colSharedLoaderA * 32]),
+                4 * sizeof(float4),
                 pipe
             );
 
@@ -94,20 +93,20 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
             //     for (uint i = 0; i < 8; i+= 1)
             //         printf("%f  ",__half2float(As[rowSharedLoaderA * BN + colSharedLoaderA * 8+i]));
         }
-        else if (threadIdx.x >= numAsElements/8 && threadIdx.x < (numAsElements + numBsElements)/8) {
+        else if (threadIdx.x >= numAsElements/32 && threadIdx.x < (numAsElements + numBsElements)/32) {
 
             cuda::memcpy_async(
-                reinterpret_cast<float4 *>(&Bs[stage][rowSharedLoaderB * BN + colSharedLoaderB * 8]),
-                reinterpret_cast<float4 *>(&B[rowSharedLoaderB * N + colSharedLoaderB * 8]),
-                sizeof(float4),
+                reinterpret_cast<float4 *>(&Bs[stage][rowSharedLoaderB * BN + colSharedLoaderB * 32]),
+                reinterpret_cast<float4 *>(&B[rowSharedLoaderB * N + colSharedLoaderB * 32]),
+                4 * sizeof(float4),
                 pipe
             );
 
         }
         pipe.producer_commit();
-        if (threadIdx.x < numAsElements/8)
+        if (threadIdx.x < numAsElements/32)
             A += BK;
-        else if (threadIdx.x >= numAsElements/8 && threadIdx.x < (numAsElements + numBsElements)/8)
+        else if (threadIdx.x >= numAsElements/32 && threadIdx.x < (numAsElements + numBsElements)/32)
             B += BK * N;
     }
 
@@ -120,12 +119,12 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
         //     for (int i = 0 ; i <BM*BK ; i++) {
         //         if(i%BK==0)
         //             printf("\n");
-        //         printf("%f  ", __half2float(As[stage][i]));
+        //         printf("%f  ", __half2float(As[i]));
         //
         //     }
         // }
 
-
+        if (threadIdx.x < 256)
         for (int i = 0; i < BK; i += WMMA_K) {
             wmma::load_matrix_sync(a_frag, As[stage] + (warpRow * WMMA_M) * BK + i , BK);
             wmma::load_matrix_sync(b_frag, Bs[stage] + i* BN + warpCol * numColSpanBN * WMMA_N , BN);
@@ -133,6 +132,24 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
 
             wmma::load_matrix_sync(b_frag, Bs[stage] + i* BN + (warpCol * numColSpanBN +1 )* WMMA_N  , BN);
             wmma::mma_sync(accs[1], a_frag, b_frag, accs[1]);
+
+            wmma::load_matrix_sync(b_frag, Bs[stage] + i* BN + (warpCol * numColSpanBN +2 )* WMMA_N  , BN);
+            wmma::mma_sync(accs[2], a_frag, b_frag, accs[2]);
+
+            wmma::load_matrix_sync(b_frag, Bs[stage] + i* BN + (warpCol * numColSpanBN +3 )* WMMA_N  , BN);
+            wmma::mma_sync(accs[3], a_frag, b_frag, accs[3]);
+
+            wmma::load_matrix_sync(b_frag, Bs[stage] + i* BN + (warpCol * numColSpanBN +4 )* WMMA_N  , BN);
+            wmma::mma_sync(accs[4], a_frag, b_frag, accs[4]);
+
+            wmma::load_matrix_sync(b_frag, Bs[stage] + i* BN + (warpCol * numColSpanBN +5 )* WMMA_N  , BN);
+            wmma::mma_sync(accs[5], a_frag, b_frag, accs[5]);
+
+            wmma::load_matrix_sync(b_frag, Bs[stage] + i* BN + (warpCol * numColSpanBN +6 )* WMMA_N  , BN);
+            wmma::mma_sync(accs[6], a_frag, b_frag, accs[6]);
+
+            wmma::load_matrix_sync(b_frag, Bs[stage] + i* BN + (warpCol * numColSpanBN +7 )* WMMA_N  , BN);
+            wmma::mma_sync(accs[7], a_frag, b_frag, accs[7]);
         }
 
         __syncthreads();
@@ -142,11 +159,11 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
 
             pipe.producer_acquire();
 
-            if (threadIdx.x < numAsElements/8) {
+            if (threadIdx.x < numAsElements/32) {
                 cuda::memcpy_async(
-                    reinterpret_cast<float4 *>(&As[stage][rowSharedLoaderA * BK + colSharedLoaderA * 8]),
-                    reinterpret_cast<float4 *>(&A[rowSharedLoaderA * K + colSharedLoaderA * 8]),
-                    sizeof(float4),
+                    reinterpret_cast<float4 *>(&As[stage][rowSharedLoaderA * BK + colSharedLoaderA * 32]),
+                    reinterpret_cast<float4 *>(&A[rowSharedLoaderA * K + colSharedLoaderA * 32]),
+                    4 * sizeof(float4),
                     pipe
                 );
 
@@ -155,27 +172,35 @@ __global__ void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alp
                 //     for (uint i = 0; i < 8; i+= 1)
                 //         printf("%f  ",__half2float(As[rowSharedLoaderA * BN + colSharedLoaderA * 8+i]));
             }
-            else if (threadIdx.x >= numAsElements/8 && threadIdx.x < (numAsElements + numBsElements)/8) {
+            else if (threadIdx.x >= numAsElements/32 && threadIdx.x < (numAsElements + numBsElements)/32) {
 
                 cuda::memcpy_async(
-                    reinterpret_cast<float4 *>(&Bs[stage][rowSharedLoaderB * BN + colSharedLoaderB * 8]),
-                    reinterpret_cast<float4 *>(&B[rowSharedLoaderB * N + colSharedLoaderB * 8]),
-                    sizeof(float4),
+                    reinterpret_cast<float4 *>(&Bs[stage][rowSharedLoaderB * BN + colSharedLoaderB * 32]),
+                    reinterpret_cast<float4 *>(&B[rowSharedLoaderB * N + colSharedLoaderB * 32]),
+                    4 * sizeof(float4),
                     pipe
                 );
 
             }
 
             pipe.producer_commit();
-            if (threadIdx.x < numAsElements/8)
+            if (threadIdx.x < numAsElements/32)
                 A += BK;
-            else if (threadIdx.x >= numAsElements/8 && threadIdx.x < (numAsElements + numBsElements)/8)
+            else if (threadIdx.x >= numAsElements/32 && threadIdx.x < (numAsElements + numBsElements)/32)
                 B += BK * N;
 
             stage = (stage + 1) % 2;
         }
     }
+    if (threadIdx.x < 256) {
         wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + warpCol * numColSpanBN * WMMA_N, accs[0], N, wmma::mem_row_major);
         wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + (warpCol * numColSpanBN + 1) * WMMA_N, accs[1], N, wmma::mem_row_major);
+        wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + (warpCol * numColSpanBN + 2) * WMMA_N, accs[2], N, wmma::mem_row_major);
+        wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + (warpCol * numColSpanBN + 3) * WMMA_N, accs[3], N, wmma::mem_row_major);
+        wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + (warpCol * numColSpanBN + 4) * WMMA_N, accs[4], N, wmma::mem_row_major);
+        wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + (warpCol * numColSpanBN + 5) * WMMA_N, accs[5], N, wmma::mem_row_major);
+        wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + (warpCol * numColSpanBN + 6) * WMMA_N, accs[6], N, wmma::mem_row_major);
+        wmma::store_matrix_sync(C + (warpRow * WMMA_M) * N + (warpCol * numColSpanBN + 7) * WMMA_N, accs[7], N, wmma::mem_row_major);
 
+    }
 }

@@ -23,4 +23,5 @@
 #include "tensorCoreKernels/tensor_core_double_buffering_stride3.cuh"
 #include "tensorCoreKernels/tensor_core_resolve_bank_conflicts.cuh"
 #include "tensorCoreKernels/tensor_core_resolving_stalls.cuh"
+#include "tensorCoreKernels/tensor_core_resolving_stalls2.cuh"
 #include "tensorCoreKernels/test_kernel.cuh"

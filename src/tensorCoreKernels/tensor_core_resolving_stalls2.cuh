@@ -115,6 +115,13 @@ __global__ void runSgemmResolvingStallsTensorCore2(int M, int N, int K, float al
         cuda::pipeline_consumer_wait_prior<1>(pipe);
 
         __syncthreads();
+         if (threadIdx.x==0 && blockIdx.x ==0 && blockIdx.y==0 && bkIdx==0)
+            for (uint x = 0; x < 10*64; x+= 1) {
+                if (x%64==0)
+                    printf("\n");
+                printf("%f  ",__half2float(As[0][x]));
+
+            }
         // if (threadIdx.x==0 && blockIdx.x ==0 && blockIdx.y==0 && bkIdx==0) {
         //     for (int i = 0 ; i <BM*BK ; i++) {
         //         if(i%BK==0)

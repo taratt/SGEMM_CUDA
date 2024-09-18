@@ -24,4 +24,5 @@
 #include "tensorCoreKernels/tensor_core_resolve_bank_conflicts.cuh"
 #include "tensorCoreKernels/tensor_core_resolving_stalls.cuh"
 #include "tensorCoreKernels/tensor_core_resolving_stalls2.cuh"
+#include "tensorCoreKernels/tensor_core_mma.cuh"
 #include "tensorCoreKernels/test_kernel.cuh"

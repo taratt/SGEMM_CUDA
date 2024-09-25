@@ -65,91 +65,100 @@ __global__ void runSgemmPtxMma(int M, int N, int K, float alpha, __half *A,
     float acc2[MMA_M * MMA_N] = {0};
     float acc3[MMA_M * MMA_N] = {0};
 
-    // for (uint bkIdx = 0; bkIdx < K; bkIdx += BK) {
-    //     if (threadIdx.x < numAsElements / 8) {
-    //         reinterpret_cast<float4 *>(&As[rowSharedLoaderA * BK + colSharedLoaderA * 8])[0] =
-    //             reinterpret_cast<float4 *>(&A[rowSharedLoaderA * K + colSharedLoaderA * 8])[0];
-    //     } else if (threadIdx.x >= numAsElements / 8 && threadIdx.x < (numAsElements + numBsElements) / 8) {
-    //         reinterpret_cast<float4 *>(&Bs[rowSharedLoaderB * BN + colSharedLoaderB * 8])[0] =
-    //             reinterpret_cast<float4 *>(&B[rowSharedLoaderB * N + colSharedLoaderB * 8])[0];
-    //     }
-    //
-    //     __syncthreads();
-    //
-    //     if (threadIdx.x < numAsElements / 8) {
-    //         A += BK;
-    //     } else if (threadIdx.x >= numAsElements / 8 && threadIdx.x < (numAsElements + numBsElements) / 8) {
-    //         B += BK * N;
-    //     }
-    //
-    //     for (int i = 0; i < BK; i += MMA_K) {
-    //
-    //         asm volatile("ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n"
-    //                  : "=r"(ARegisters[0]), "=r"(ARegisters[1]), "=r"(ARegisters[2]), "=r"(ARegisters[3])
-    //                  : "r"(__cvta_generic_to_shared(&As[lane*8])));
-    //
-    //         asm volatile("ldmatrix.sync.aligned.x2.m8n8.trans.shared.b16 {%0, %1}, [%4];\n"
-    //                  : "=r"(BRegisters[0]), "=r"(BRegisters[1])
-    //                  : "r"(__cvta_generic_to_shared(&Bs[lane*8])));
-    //
-    //         // // PTX inline assembly for MMA, using explicit casts to short
-    //         // asm volatile(
-    //         //     "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
-    //         //     "{%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9, %10, %11}, {%12, %13, %14, %15};\n"
-    //         //     : "=f"(acc0[0]), "=f"(acc0[1]), "=f"(acc0[2]), "=f"(acc0[3])  // Output registers
-    //         //     : "h"(__half_as_short(A_frag[0])), "h"(__half_as_short(A_frag[1])),
-    //         //       "h"(__half_as_short(A_frag[2])), "h"(__half_as_short(A_frag[3])),  // Input A
-    //         //       "h"(__half_as_short(B_frag[0])), "h"(__half_as_short(B_frag[1])),
-    //         //       "h"(__half_as_short(B_frag[2])), "h"(__half_as_short(B_frag[3])),  // Input B
-    //         //       "f"(acc0[0]), "f"(acc0[1]), "f"(acc0[2]), "f"(acc0[3])    // Accumulators
-    //         // );
-    //         //
-    //         //
-    //         // asm volatile(
-    //         //     "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
-    //         //     "{%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9, %10, %11}, {%12, %13, %14, %15};\n"
-    //         //     : "=f"(acc1[0]), "=f"(acc1[1]), "=f"(acc1[2]), "=f"(acc1[3])  // Output registers
-    //         //     : "h"(__half_as_short(A_frag[0])), "h"(__half_as_short(A_frag[1])),
-    //         //       "h"(__half_as_short(A_frag[2])), "h"(__half_as_short(A_frag[3])),  // Input A
-    //         //       "h"(__half_as_short(B_frag[0])), "h"(__half_as_short(B_frag[1])),
-    //         //       "h"(__half_as_short(B_frag[2])), "h"(__half_as_short(B_frag[3])),  // Input B
-    //         //       "f"(acc1[0]), "f"(acc1[1]), "f"(acc1[2]), "f"(acc1[3])    // Accumulators
-    //         // );
-    //         //
-    //         //
-    //         //
-    //         // asm volatile(
-    //         //     "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
-    //         //     "{%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9, %10, %11}, {%12, %13, %14, %15};\n"
-    //         //     : "=f"(acc0[0]), "=f"(acc0[1]), "=f"(acc0[2]), "=f"(acc0[3])  // Output registers
-    //         //     : "h"(__half_as_short(A_frag[0])), "h"(__half_as_short(A_frag[1])),
-    //         //       "h"(__half_as_short(A_frag[2])), "h"(__half_as_short(A_frag[3])),  // Input A
-    //         //       "h"(__half_as_short(B_frag[0])), "h"(__half_as_short(B_frag[1])),
-    //         //       "h"(__half_as_short(B_frag[2])), "h"(__half_as_short(B_frag[3])),  // Input B
-    //         //       "f"(acc0[0]), "f"(acc0[1]), "f"(acc0[2]), "f"(acc0[3])    // Accumulators
-    //         // );
-    //         //
-    //         //
-    //         // asm volatile(
-    //         //     "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
-    //         //     "{%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9, %10, %11}, {%12, %13, %14, %15};\n"
-    //         //     : "=f"(acc1[0]), "=f"(acc1[1]), "=f"(acc1[2]), "=f"(acc1[3])  // Output registers
-    //         //     : "h"(__half_as_short(A_frag[0])), "h"(__half_as_short(A_frag[1])),
-    //         //       "h"(__half_as_short(A_frag[2])), "h"(__half_as_short(A_frag[3])),  // Input A
-    //         //       "h"(__half_as_short(B_frag[0])), "h"(__half_as_short(B_frag[1])),
-    //         //       "h"(__half_as_short(B_frag[2])), "h"(__half_as_short(B_frag[3])),  // Input B
-    //         //       "f"(acc1[0]), "f"(acc1[1]), "f"(acc1[2]), "f"(acc1[3])    // Accumulators
-    //         // );
-    //     }
-    //
-    //     __syncthreads();
-    // }
-    //
-    // // Store results
-    // for (int i = 0; i < MMA_M; ++i) {
-    //     for (int j = 0; j < MMA_N; ++j) {
-    //         C[(warpRow * MMA_M + i) * N + (warpCol * numColSpanBN + j)] = acc0[i * MMA_N + j];
-    //         C[(warpRow * MMA_M + i) * N + (warpCol * numColSpanBN + j) + 1] = acc1[i * MMA_N + j];
-    //     }
-    // }
+     for (uint bkIdx = 0; bkIdx < K; bkIdx += BK) {
+         if (threadIdx.x < numAsElements / 8) {
+             reinterpret_cast<float4 *>(&As[rowSharedLoaderA * BK + colSharedLoaderA * 8])[0] =
+                 reinterpret_cast<float4 *>(&A[rowSharedLoaderA * K + colSharedLoaderA * 8])[0];
+         } else if (threadIdx.x >= numAsElements / 8 && threadIdx.x < (numAsElements + numBsElements) / 8) {
+             reinterpret_cast<float4 *>(&Bs[rowSharedLoaderB * BN + colSharedLoaderB * 8])[0] =
+                 reinterpret_cast<float4 *>(&B[rowSharedLoaderB * N + colSharedLoaderB * 8])[0];
+         }
+
+         __syncthreads();
+
+         if (threadIdx.x < numAsElements / 8) {
+             A += BK;
+         } else if (threadIdx.x >= numAsElements / 8 && threadIdx.x < (numAsElements + numBsElements) / 8) {
+             B += BK * N;
+         }
+
+         for (int i = 0; i < BK; i += MMA_K) {
+
+             asm volatile("ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n"
+                      : "=r"(ARegisters[0]), "=r"(ARegisters[1]), "=r"(ARegisters[2]), "=r"(ARegisters[3])
+                      : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&(As + (warpRow * MMA_M) * BK + i)[((lane%16)*16) + (lane/16)*8]))));
+
+             asm volatile("ldmatrix.sync.aligned.x2.m8n8.trans.shared.b16 {%0, %1}, [%2];\n"
+                      : "=r"(BRegisters[0]), "=r"(BRegisters[1])
+                      : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&(Bs + i* BN + warpCol * numColSpanBN * MMA_N)[((lane%16)*16)]))));
+
+              // PTX inline assembly for MMA, using explicit casts to short
+              asm volatile(
+                  "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+                  "{%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9, %10, %11}, {%12, %13, %14, %15};\n"
+                  : "=f"(acc0[0]), "=f"(acc0[1]), "=f"(acc0[2]), "=f"(acc0[3])  // Output registers
+                  : "h"(__half_as_short(A_frag[0])), "h"(__half_as_short(A_frag[1])),
+                    "h"(__half_as_short(A_frag[2])), "h"(__half_as_short(A_frag[3])),  // Input A
+                    "h"(__half_as_short(B_frag[0])), "h"(__half_as_short(B_frag[1])),
+                    "h"(__half_as_short(B_frag[2])), "h"(__half_as_short(B_frag[3])),  // Input B
+                    "f"(acc0[0]), "f"(acc0[1]), "f"(acc0[2]), "f"(acc0[3])    // Accumulators
+              );
+
+             asm volatile("ldmatrix.sync.aligned.x2.m8n8.trans.shared.b16 {%0, %1}, [%2];\n"
+                      : "=r"(BRegisters[0]), "=r"(BRegisters[1])
+                      : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&(Bs + i* BN + warpCol * numColSpanBN * MMA_N)[((lane%16)*16)]))));
+
+
+              asm volatile(
+                  "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+                  "{%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9, %10, %11}, {%12, %13, %14, %15};\n"
+                  : "=f"(acc1[0]), "=f"(acc1[1]), "=f"(acc1[2]), "=f"(acc1[3])  // Output registers
+                  : "h"(__half_as_short(A_frag[0])), "h"(__half_as_short(A_frag[1])),
+                    "h"(__half_as_short(A_frag[2])), "h"(__half_as_short(A_frag[3])),  // Input A
+                    "h"(__half_as_short(B_frag[0])), "h"(__half_as_short(B_frag[1])),
+                    "h"(__half_as_short(B_frag[2])), "h"(__half_as_short(B_frag[3])),  // Input B
+                    "f"(acc1[0]), "f"(acc1[1]), "f"(acc1[2]), "f"(acc1[3])    // Accumulators
+              );
+
+             asm volatile("ldmatrix.sync.aligned.x2.m8n8.trans.shared.b16 {%0, %1}, [%2];\n"
+                      : "=r"(BRegisters[0]), "=r"(BRegisters[1])
+                      : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&(Bs + i* BN + warpCol * numColSpanBN * MMA_N)[((lane%16)*16)]))));
+
+              asm volatile(
+                  "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+                  "{%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9, %10, %11}, {%12, %13, %14, %15};\n"
+                  : "=f"(acc0[0]), "=f"(acc0[1]), "=f"(acc0[2]), "=f"(acc0[3])  // Output registers
+                  : "h"(__half_as_short(A_frag[0])), "h"(__half_as_short(A_frag[1])),
+                    "h"(__half_as_short(A_frag[2])), "h"(__half_as_short(A_frag[3])),  // Input A
+                    "h"(__half_as_short(B_frag[0])), "h"(__half_as_short(B_frag[1])),
+                    "h"(__half_as_short(B_frag[2])), "h"(__half_as_short(B_frag[3])),  // Input B
+                    "f"(acc0[0]), "f"(acc0[1]), "f"(acc0[2]), "f"(acc0[3])    // Accumulators
+              );
+
+             asm volatile("ldmatrix.sync.aligned.x2.m8n8.trans.shared.b16 {%0, %1}, [%2];\n"
+                      : "=r"(BRegisters[0]), "=r"(BRegisters[1])
+                      : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&(Bs + i* BN + warpCol * numColSpanBN * MMA_N)[((lane%16)*16)]))));
+
+              asm volatile(
+                  "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+                  "{%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9, %10, %11}, {%12, %13, %14, %15};\n"
+                  : "=f"(acc1[0]), "=f"(acc1[1]), "=f"(acc1[2]), "=f"(acc1[3])  // Output registers
+                  : "h"(__half_as_short(A_frag[0])), "h"(__half_as_short(A_frag[1])),
+                    "h"(__half_as_short(A_frag[2])), "h"(__half_as_short(A_frag[3])),  // Input A
+                    "h"(__half_as_short(B_frag[0])), "h"(__half_as_short(B_frag[1])),
+                    "h"(__half_as_short(B_frag[2])), "h"(__half_as_short(B_frag[3])),  // Input B
+                    "f"(acc1[0]), "f"(acc1[1]), "f"(acc1[2]), "f"(acc1[3])    // Accumulators
+              );
+         }
+
+         __syncthreads();
+     }
+
+    //  Store results
+     for (int i = 0; i < MMA_M; ++i) {
+         for (int j = 0; j < MMA_N; ++j) {
+             C[(warpRow * MMA_M + i) * N + (warpCol * numColSpanBN + j)] = acc0[i * MMA_N + j];
+             C[(warpRow * MMA_M + i) * N + (warpCol * numColSpanBN + j) + 1] = acc1[i * MMA_N + j];
+         }
+     }
 }

@@ -57,7 +57,7 @@ __global__ void runSgemmIntPtxMma(int M, int N, int K, float alpha, int8_t *A,
 
     uint32_t ARegisters[2];
     uint32_t BRegisters[1];
-    int lane = (threadIdx.x % 32);
+    int lane = (threadIdx.x % WARP_SIZE);
 
     // Initialize registers for PTX-level MMA operations
     int32_t acc0[4] = {0, 0, 0, 0};
@@ -92,14 +92,14 @@ __global__ void runSgemmIntPtxMma(int M, int N, int K, float alpha, int8_t *A,
             asm volatile("ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0, %1}, [%2];\n"
                 : "=r"(ARegisters[0]), "=r"(ARegisters[1])
                 : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(
-                    &(As + (warpRow * MMA_M) * BK + i)[((lane % 16) * BK) +
-                                                       (lane / 16) * 8]))));
+                    &(As[(warpRow * MMA_M) * BK + i + ((lane % 16) * BK) +
+                                                       (lane / 16) * 8])))));
 
             asm volatile("ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {%0}, [%1];\n"
                 : "=r"(BRegisters[0])
                 : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&(
-                    Bs + i * BN +
-                    warpCol * numColSpanBN * MMA_N)[((lane % 16) * BN)]))));
+                    Bs[i * BN +
+                    warpCol * numColSpanBN * MMA_N + ((lane % 16) * BN)])))));
 
             // PTX inline assembly for MMA, using explicit casts to short
             asm volatile("mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 "
@@ -114,8 +114,8 @@ __global__ void runSgemmIntPtxMma(int M, int N, int K, float alpha, int8_t *A,
             asm volatile("ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {%0}, [%1];\n"
                 : "=r"(BRegisters[0])
                 : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(
-                    &(Bs + i * BN + (warpCol * numColSpanBN + 1) * MMA_N)[(
-                        (lane % 16) * BN)]))));
+                    &(Bs[i * BN + (warpCol * numColSpanBN + 1) * MMA_N + (
+                        (lane % 16) * BN)])))));
 
             asm volatile("mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 "
                 "{%0, %1, %2, %3}, {%4, %5}, {%6}, {%7, %8, %9, %10};\n"
@@ -129,8 +129,8 @@ __global__ void runSgemmIntPtxMma(int M, int N, int K, float alpha, int8_t *A,
             asm volatile("ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {%0}, [%1];\n"
                 : "=r"(BRegisters[0])
                 : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(
-                    &(Bs + i * BN + (warpCol * numColSpanBN + 2) * MMA_N)[(
-                        (lane % 16) * BN)]))));
+                    &(Bs[i * BN + (warpCol * numColSpanBN + 2) * MMA_N + (
+                        (lane % 16) * BN)])))));
 
             asm volatile("mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 "
                 "{%0, %1, %2, %3}, {%4, %5}, {%6}, {%7, %8, %9, %10};\n"
@@ -144,8 +144,8 @@ __global__ void runSgemmIntPtxMma(int M, int N, int K, float alpha, int8_t *A,
             asm volatile("ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {%0}, [%1];\n"
                 : "=r"(BRegisters[0])
                 : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(
-                    &(Bs + i * BN + (warpCol * numColSpanBN + 3) * MMA_N)[(
-                        (lane % 16) * BN)]))));
+                    &(Bs[i * BN + (warpCol * numColSpanBN + 3) * MMA_N + (
+                        (lane % 16) * BN)])))));
 
             asm volatile("mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 "
                 "{%0, %1, %2, %3}, {%4, %5}, {%6}, {%7, %8, %9, %10};\n"

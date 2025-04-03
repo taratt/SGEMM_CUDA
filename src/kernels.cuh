@@ -25,3 +25,4 @@
 #include "tensorCoreKernels/tensor_core_resolving_stalls.cuh"
 #include "tensorCoreKernels/tensor_core_resolving_stalls2.cuh"
 #include "tensorCoreKernels/tensor_core_mma.cuh"
+#include "tensorCoreKernels/tensor_core_int_mma.cuh"

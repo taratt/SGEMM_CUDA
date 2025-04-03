@@ -856,6 +856,9 @@ void run_tensor_core_kernel(int kernel_num, int M, int N, int K, float alpha, __
     case 24:
       runSgemmTensorCoreMma(M, N, K, alpha, A, B, beta, C);
     break;
+    case 25:
+      runSgemmTensorCoreMmaAlt(M, N, K, alpha, A, B, beta, C);
+    break;
     default:
       throw std::invalid_argument("Unknown kernel number");
   }

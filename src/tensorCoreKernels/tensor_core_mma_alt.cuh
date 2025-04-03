@@ -12,7 +12,7 @@
 #define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
 #define MMA_M 16
 #define MMA_N 8
-#define MMA_K 16
+#define MMA_K 8
 #define WARP_SIZE 32
 
 template <const int BM, const int BN, const int BK>

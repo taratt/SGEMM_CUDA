@@ -40,11 +40,11 @@ int main(int argc, char **argv) {
   // type cublasStatus_t to determine whether the handle was created
   // successfully (the value is 0)
   cublasHandle_t handle;
-  cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
   if (cublasCreate(&handle)) {
     std::cerr << "Create cublas handle error." << std::endl;
     exit(EXIT_FAILURE);
   };
+  cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH);
 
   // Using cudaEvent for gpu stream timing, cudaEvent is equivalent to
   // publishing event tasks in the target stream
@@ -173,11 +173,6 @@ int main(int argc, char **argv) {
     // accepts half/float, not int8/int32
     int8_t *dA = nullptr, *dB = nullptr;
     int32_t *dC = nullptr, *dC_ref = nullptr;
-    cudaCheck(cudaMalloc((void **)&dA, sizeof(int8_t) * max_size * max_size));
-    cudaCheck(cudaMalloc((void **)&dB, sizeof(int8_t) * max_size * max_size));
-    cudaCheck(cudaMalloc((void **)&dC, sizeof(int32_t) * max_size * max_size));
-    cudaCheck(
-        cudaMalloc((void **)&dC_ref, sizeof(int32_t) * max_size * max_size));
     auto *A = (int8_t *)malloc(sizeof(int8_t) * max_size * max_size);
     auto *B = (int8_t *)malloc(sizeof(int8_t) * max_size * max_size);
     auto *C = (int32_t *)malloc(sizeof(int32_t) * max_size * max_size);
@@ -185,6 +180,13 @@ int main(int argc, char **argv) {
     initialize_incremental_int8(A, max_size * max_size);
     initialize_one_int8(B, max_size * max_size);
     initialize_one_int(C, max_size * max_size);
+
+    cudaCheck(cudaMalloc((void **)&dA, sizeof(int8_t) * max_size * max_size));
+    cudaCheck(cudaMalloc((void **)&dB, sizeof(int8_t) * max_size * max_size));
+    cudaCheck(cudaMalloc((void **)&dC, sizeof(int32_t) * max_size * max_size));
+    cudaCheck(
+        cudaMalloc((void **)&dC_ref, sizeof(int32_t) * max_size * max_size));
+
     cudaCheck(cudaMemcpy(dA, A, sizeof(int8_t) * max_size * max_size,
                          cudaMemcpyHostToDevice));
     cudaCheck(cudaMemcpy(dB, B, sizeof(int8_t) * max_size * max_size,
@@ -205,11 +207,9 @@ int main(int argc, char **argv) {
       runSgemmIntTensorCoreMma(m, n, k, alpha, dA, dB, beta, dC);
 
       cudaCheck(cudaDeviceSynchronize());
-      cudaCheck(
-          cudaGetLastError()); // Check for async errors during kernel run
+      cudaCheck(cudaGetLastError()); // Check for async errors during kernel run
       cudaMemcpy(C, dC, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
-      cudaMemcpy(C_ref, dC_ref, sizeof(float) * m * n,
-                 cudaMemcpyDeviceToHost);
+      cudaMemcpy(C_ref, dC_ref, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
 
       if (!verify_matrix_int(C_ref, C, m * n)) {
         std::cout
@@ -269,8 +269,7 @@ int main(int argc, char **argv) {
     cudaFree(dC);
     cudaFree(dC_ref);
     cublasDestroy(handle);
-  }
-  else if (kernel_num >= 13 || kernel_num == 0) {
+  } else if (kernel_num >= 13 || kernel_num == 0) {
     __half *A = nullptr, *B = nullptr;
     float *C = nullptr, *C_ref = nullptr; // host matrices
     __half *dA = nullptr, *dB = nullptr;

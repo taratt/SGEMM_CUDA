@@ -97,6 +97,17 @@ void initialize_identity_hf(__half *mat, int N) {
     }
   }
 }
+void initialize_identity_int8(int8_t *mat, int N) {
+  for (int i = 0; i < N; ++i) {
+    for (int j = 0; j < N; ++j) {
+      if (i == j) {
+        mat[i * N + j] = 1;
+      } else {
+        mat[i * N + j] = 0;
+      }
+    }
+  }
+}
 void initialize_incremental_float(float *mat, int N) {
   for (int i = 0; i < N; i++) {
     mat[i] = (float)(i);

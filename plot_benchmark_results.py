@@ -118,8 +118,8 @@ if __name__ == "__main__":
     df = df[df["size"] == 4096].sort_values(by="gflops", ascending=True)[["kernel", "gflops"]]
     df["kernel"] = df["kernel"].map({k: f"{k}: {v}" for k, v in KERNEL_NAMES.items()})
     # Disable relperf if only running one kernel.
-    df["relperf"] = df["gflops"] / df[df["kernel"] == "0: cuBLAS"]["gflops"].iloc[0]
-    df["relperf"] = df["relperf"].apply(lambda x: f"{x*100:.1f}%")
+    # df["relperf"] = df["gflops"] / df[df["kernel"] == "0: cuBLAS"]["gflops"].iloc[0]
+    # df["relperf"] = df["relperf"].apply(lambda x: f"{x*100:.1f}%")
     df.columns = ["Kernel", "GFLOPs/s",] # "Performance relative to cuBLAS"]
 
     # update the README.md with the new results

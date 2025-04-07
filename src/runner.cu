@@ -141,14 +141,14 @@ void randomize_matrix_hf(__half *mat, int N) {
   }
 }
 
-void randomize_matrix_int(int32_t *mat, int N) {
+void randomize_matrix_int8(int8_t *mat, int N) {
   struct timeval time{};
   gettimeofday(&time, nullptr);
   srand(time.tv_usec);
   for (int i = 0; i < N; i++) {
     float tmp = (float)(rand() % 5) + 0.01 * (rand() % 5);
     tmp = (rand() % 2 == 0) ? tmp : tmp * (-1.);
-    mat[i] = int32_t(tmp);
+    mat[i] = int8_t(tmp);
   }
 }
 
@@ -348,9 +348,9 @@ void runCublasFP32(cublasHandle_t handle, int M, int N, int K, float alpha,
 
 void runCublasINT8(cublasHandle_t handle, int M, int N, int K, float alpha,
                    int8_t *A, int8_t *B, float beta, int32_t *C) {
-  cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_8I,
-               N, A, CUDA_R_8I, K, &beta, C, CUDA_R_32I, N, CUBLAS_COMPUTE_32I,
-               CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+  cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, M, N, K, &alpha, A, CUDA_R_8I,
+               M, B, CUDA_R_8I, K, &beta, C, CUDA_R_32I, M,
+               CUBLAS_COMPUTE_32I_PEDANTIC, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 }
 
 void runCublasBF16(cublasHandle_t handle, int M, int N, int K, float alpha,
@@ -990,12 +990,14 @@ void run_tensor_core_kernel(int kernel_num, int M, int N, int K, float alpha,
     runSgemmTensorCoreMma(M, N, K, alpha, A, B, beta, C);
     break;
   case 25:
-    runSgemmTensorCoreMmaAlt(M, N, K, alpha, A, B, beta, C);
+    // runSgemmTensorCoreMmaAlt(M, N, K, alpha, A, B, beta, C);
     break;
   case 26:
     throw std::invalid_argument(
         "tensor_core_int_mma is run directly in sgemm.cu.");
     break;
+  case 27:
+    throw std::invalid_argument("cuBLAS INT8 gemm");
   default:
     throw std::invalid_argument("Unknown kernel number");
   }

@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
 
   // get kernel number
   int kernel_num = std::stoi(argv[1]);
-  if (kernel_num < 0 || kernel_num > 27) {
+  if (kernel_num < 0 || kernel_num > 28) {
     std::cerr << "Please enter a valid kernel number (0-12)" << std::endl;
     exit(EXIT_FAILURE);
   }
@@ -176,7 +176,7 @@ int main(int argc, char **argv) {
     auto *B = (int8_t *)malloc(sizeof(int8_t) * max_size * max_size);
     auto *C = (int32_t *)malloc(sizeof(int32_t) * max_size * max_size);
     auto *C_ref = (int32_t *)malloc(sizeof(int32_t) * max_size * max_size);
-    initialize_incremental_int8(A, max_size * max_size);
+    randomize_matrix_int8(A, max_size * max_size);
     initialize_one_int8(B, max_size * max_size);
     initialize_one_int(C, max_size * max_size);
 
@@ -202,33 +202,36 @@ int main(int argc, char **argv) {
                 << ", beta: " << beta << std::endl;
       // Verify the correctness of the calculation, and execute it once before
       // the kernel function timing to avoid cold start errors
-      runCublasINT8(handle, m, n, k, alpha, dA, dB, beta, dC_ref);
-      runSgemmIntTensorCoreMma(m, n, k, alpha, dA, dB, beta, dC);
+      int32_t alpha_int = 1;
+      int32_t beta_int = 0;
+      runCublasINT8(handle, m, n, k, alpha_int, dA, dB, beta_int, dC_ref);
+      runSgemmIntTensorCoreMma(m, n, k, alpha_int, dA, dB, beta_int, dC);
 
       cudaCheck(cudaDeviceSynchronize());
       cudaCheck(cudaGetLastError()); // Check for async errors during kernel run
-      cudaMemcpy(C, dC, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
-      cudaMemcpy(C_ref, dC_ref, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
+      cudaMemcpy(C, dC, sizeof(int32_t) * m * n, cudaMemcpyDeviceToHost);
+      cudaMemcpy(C_ref, dC_ref, sizeof(int32_t) * m * n,
+                 cudaMemcpyDeviceToHost);
 
-      //   if (!verify_matrix_int(C_ref, C, m * n)) {
-      //     std::cout
-      //         << "Failed to pass the correctness verification against NVIDIA
-      //         "
-      //            "cuBLAS."
-      //         << std::endl;
-      //     if (m <= 4096) {
-      //       std::cout << " Logging faulty output into " << errLogFile <<
-      //       "\n"; std::ofstream fs; fs.open(errLogFile); fs << "A:\n";
-      //       print_matrix_int8(A, m, n, fs);
-      //       fs << "B:\n";
-      //       print_matrix_int8(B, m, n, fs);
-      //       fs << "C:\n";
-      //       print_matrix_int(C, m, n, fs);
-      //       fs << "Should:\n";
-      //       print_matrix_int(C_ref, m, n, fs);
-      //     }
-      //     exit(EXIT_FAILURE);
-      //   }
+      if (!verify_matrix_int(C_ref, C, m * n)) {
+        std::cout << "Failed to pass the correctness verification against "
+                     "NVIDIA cuBLAS."
+                  << std::endl;
+        if (m <= 4096) {
+          std::cout << " Logging faulty output into " << errLogFile << "\n";
+          std::ofstream fs;
+          fs.open(errLogFile);
+          fs << "A:\n";
+          print_matrix_int8(A, m, n, fs);
+          fs << "B:\n";
+          print_matrix_int8(B, m, n, fs);
+          fs << "C:\n";
+          print_matrix_int(C, m, n, fs);
+          fs << "Should:\n";
+          print_matrix_int(C_ref, m, n, fs);
+        }
+        exit(EXIT_FAILURE);
+      }
       for (int j = 0; j < 1000; j++) {
         // We don't reset dC between runs to save time
         runSgemmIntTensorCoreMma(m, n, k, alpha, dA, dB, beta, dC);
@@ -267,6 +270,74 @@ int main(int argc, char **argv) {
     cudaFree(dC);
     cudaFree(dC_ref);
     cublasDestroy(handle);
+  } else if (kernel_num == 27) {
+    // int cublas
+    int8_t *dA = nullptr, *dB = nullptr;
+    int32_t *dC = nullptr;
+    auto *A = (int8_t *)malloc(sizeof(int8_t) * max_size * max_size);
+    auto *B = (int8_t *)malloc(sizeof(int8_t) * max_size * max_size);
+    auto *C = (int32_t *)malloc(sizeof(int32_t) * max_size * max_size);
+    randomize_matrix_int8(A, max_size * max_size);
+    randomize_matrix_int8(B, max_size * max_size);
+    initialize_one_int(C, max_size * max_size);
+
+    cudaCheck(cudaMalloc((void **)&dA, sizeof(int8_t) * max_size * max_size));
+    cudaCheck(cudaMalloc((void **)&dB, sizeof(int8_t) * max_size * max_size));
+    cudaCheck(cudaMalloc((void **)&dC, sizeof(int32_t) * max_size * max_size));
+    cudaCheck(cudaMemcpy(dA, A, sizeof(int8_t) * max_size * max_size,
+                         cudaMemcpyHostToDevice));
+    cudaCheck(cudaMemcpy(dB, B, sizeof(int8_t) * max_size * max_size,
+                         cudaMemcpyHostToDevice));
+    cudaCheck(cudaMemcpy(dC, C, sizeof(int32_t) * max_size * max_size,
+                         cudaMemcpyHostToDevice));
+    int repeat_times = 50;
+    for (int size : SIZE) {
+      m = n = k = size;
+
+      std::cout << "dimensions(m=n=k) " << m << ", alpha: " << alpha
+                << ", beta: " << beta << std::endl;
+      // Verify the correctness of the calculation, and execute it once before
+      // the kernel function timing to avoid cold start errors
+      int32_t alpha_int = 1;
+      int32_t beta_int = 0;
+      runCublasINT8(handle, m, n, k, alpha_int, dA, dB, beta_int, dC);
+
+      cudaCheck(cudaDeviceSynchronize());
+      cudaCheck(cudaGetLastError()); // Check for async errors during kernel run
+      cudaMemcpy(C, dC, sizeof(int32_t) * m * n, cudaMemcpyDeviceToHost);
+      for (int j = 0; j < 1000; j++) {
+        // We don't reset dC between runs to save time
+        runCublasINT8(handle, m, n, k, alpha_int, dA, dB, beta_int, dC);
+      }
+      cudaEventRecord(beg);
+      for (int j = 0; j < repeat_times; j++) {
+        // We don't reset dC between runs to save time
+        runCublasINT8(handle, m, n, k, alpha_int, dA, dB, beta_int, dC);
+      }
+      cudaEventRecord(end);
+      cudaEventSynchronize(beg);
+      cudaEventSynchronize(end);
+      cudaEventElapsedTime(&elapsed_time, beg, end);
+      elapsed_time /= 1000.; // Convert to seconds
+
+      long flops = 2 * m * n * k;
+      printf(
+          "Average elapsed time: (%7.6f) s, performance: (%7.1f) GFLOPS. size: "
+          "(%ld).\n",
+          elapsed_time / repeat_times,
+          (repeat_times * flops * 1e-9) / elapsed_time, m);
+      fflush(stdout);
+    }
+
+    // Free up CPU and GPU space
+    free(A);
+    free(B);
+    free(C);
+    cudaFree(dA);
+    cudaFree(dB);
+    cudaFree(dC);
+    cublasDestroy(handle);
+
   } else if (kernel_num >= 13 || kernel_num == 0) {
     __half *A = nullptr, *B = nullptr;
     float *C = nullptr, *C_ref = nullptr; // host matrices

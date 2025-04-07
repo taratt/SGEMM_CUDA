@@ -25,6 +25,7 @@ void initialize_one_float(float *mat, int N);
 void initialize_one_int8(int8_t *mat, int N);
 void initialize_one_int(int32_t *mat, int N);
 void zero_init_matrix(float *mat, int N);
+void zero_init_matrix_int8(int8_t *mat, int N);
 void copy_matrix(const float *src, float *dest, int N);
 void print_matrix(const float *A, int M, int N, std::ofstream &fs);
 void print_matrix_hf(const __half *A, int M, int N, std::ofstream &fs);

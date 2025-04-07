@@ -61,7 +61,7 @@ void CudaDeviceInfo() {
 void randomize_matrix(float *mat, int N) {
   // NOTICE: Use gettimeofday instead of srand((unsigned)time(NULL)); the time
   // precision is too low and the same random number is generated.
-  struct timeval time {};
+  struct timeval time{};
   gettimeofday(&time, nullptr);
   srand(time.tv_usec);
   for (int i = 0; i < N; i++) {
@@ -131,7 +131,7 @@ void initialize_one_int(int32_t *mat, int N) {
 void randomize_matrix_hf(__half *mat, int N) {
   // NOTICE: Use gettimeofday instead of srand((unsigned)time(NULL)); the time
   // precision is too low and the same random number is generated.
-  struct timeval time {};
+  struct timeval time{};
   gettimeofday(&time, nullptr);
   srand(time.tv_usec);
   for (int i = 0; i < N; i++) {
@@ -142,7 +142,7 @@ void randomize_matrix_hf(__half *mat, int N) {
 }
 
 void randomize_matrix_int(int32_t *mat, int N) {
-  struct timeval time {};
+  struct timeval time{};
   gettimeofday(&time, nullptr);
   srand(time.tv_usec);
   for (int i = 0; i < N; i++) {
@@ -161,6 +161,12 @@ void range_init_matrix(float *mat, int N) {
 void zero_init_matrix(float *mat, int N) {
   for (int i = 0; i < N; i++) {
     mat[i] = 0.0;
+  }
+}
+
+void zero_init_matrix_int8(int8_t *mat, int N) {
+  for (int i = 0; i < N; i++) {
+    mat[i] = 0;
   }
 }
 

@@ -15,3 +15,5 @@ simplest
 
 # benchmark results
 benchmark_results/
+
+.cache

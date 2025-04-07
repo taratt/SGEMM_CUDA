@@ -8,7 +8,13 @@ set -euo pipefail
 
 mkdir -p benchmark_results
 
-for kernel in {0..10}; do
+if [[ $# -eq 1 ]]; then
+    kernels=("$1")
+else
+    kernels=({0..10})
+fi
+
+for kernel in "${kernels[@]}"; do
     echo ""
     ./build/sgemm $kernel | tee "benchmark_results/${kernel}_output.txt"
     sleep 2

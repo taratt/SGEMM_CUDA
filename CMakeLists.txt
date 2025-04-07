@@ -9,11 +9,12 @@ include(CheckLanguage)
 check_language(CUDA)
 
 set(CMAKE_CXX_STANDARD 20)
-set(CUDA_COMPUTE_CAPABILITY 89)
+set(CUDA_COMPUTE_CAPABILITY 80)
 
 # in debug mode, add debug symbols to device code
 # this disables most optimizations and kills performance
-add_compile_options("$<$<AND:$<CONFIG:Debug>,$<COMPILE_LANGUAGE:CUDA>>:-G;-src-in-ptx>")
+add_compile_options("$<$<AND:$<CONFIG:Debug>,$<COMPILE_LANGUAGE:CUDA>>:-G>")
+add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
 # add_compile_options("--ptxas-options=-v")
 
 # Configure header file search paths

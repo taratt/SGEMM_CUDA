@@ -1,10 +1,11 @@
+#include "cuda_fp16.h"
 #include "kernels.cuh"
 #include "runner.cuh"
 #include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
-#include "cuda_fp16.h"
+#include <stdexcept>
 
 #define WMMA_M 16
 #define WMMA_N 16
@@ -60,7 +61,7 @@ void CudaDeviceInfo() {
 void randomize_matrix(float *mat, int N) {
   // NOTICE: Use gettimeofday instead of srand((unsigned)time(NULL)); the time
   // precision is too low and the same random number is generated.
-  struct timeval time {};
+  struct timeval time{};
   gettimeofday(&time, nullptr);
   srand(time.tv_usec);
   for (int i = 0; i < N; i++) {
@@ -76,8 +77,13 @@ void initialize_one_hf(__half *mat, int N) {
 }
 void initialize_incremental_hf(__half *mat, int N) {
   for (int i = 0; i < N; i++) {
-    int tmp = i/64;
+    int tmp = i / 64;
     mat[i] = static_cast<half>(tmp);
+  }
+}
+void initialize_incremental_int8(int8_t *mat, int N) {
+  for (int i = 0; i < N; i++) {
+    mat[i] = i;
   }
 }
 void initialize_identity_hf(__half *mat, int N) {
@@ -87,6 +93,17 @@ void initialize_identity_hf(__half *mat, int N) {
         mat[i * N + j] = __float2half(1.0);
       } else {
         mat[i * N + j] = __float2half(0.0);
+      }
+    }
+  }
+}
+void initialize_identity_int8(int8_t *mat, int N) {
+  for (int i = 0; i < N; ++i) {
+    for (int j = 0; j < N; ++j) {
+      if (i == j) {
+        mat[i * N + j] = 1;
+      } else {
+        mat[i * N + j] = 0;
       }
     }
   }
@@ -101,16 +118,37 @@ void initialize_one_float(float *mat, int N) {
     mat[i] = 1.0;
   }
 }
+void initialize_one_int8(int8_t *mat, int N) {
+  for (int i = 0; i < N; i++) {
+    mat[i] = 1;
+  }
+}
+void initialize_one_int(int32_t *mat, int N) {
+  for (int i = 0; i < N; i++) {
+    mat[i] = 1;
+  }
+}
 void randomize_matrix_hf(__half *mat, int N) {
   // NOTICE: Use gettimeofday instead of srand((unsigned)time(NULL)); the time
   // precision is too low and the same random number is generated.
-  struct timeval time {};
+  struct timeval time{};
   gettimeofday(&time, nullptr);
   srand(time.tv_usec);
   for (int i = 0; i < N; i++) {
     float tmp = (float)(rand() % 5) + 0.01 * (rand() % 5);
     tmp = (rand() % 2 == 0) ? tmp : tmp * (-1.);
     mat[i] = __float2half(tmp);
+  }
+}
+
+void randomize_matrix_int(int32_t *mat, int N) {
+  struct timeval time{};
+  gettimeofday(&time, nullptr);
+  srand(time.tv_usec);
+  for (int i = 0; i < N; i++) {
+    float tmp = (float)(rand() % 5) + 0.01 * (rand() % 5);
+    tmp = (rand() % 2 == 0) ? tmp : tmp * (-1.);
+    mat[i] = int32_t(tmp);
   }
 }
 
@@ -126,6 +164,12 @@ void zero_init_matrix(float *mat, int N) {
   }
 }
 
+void zero_init_matrix_int8(int8_t *mat, int N) {
+  for (int i = 0; i < N; i++) {
+    mat[i] = 0;
+  }
+}
+
 void copy_matrix(const float *src, float *dest, int N) {
   int i;
   for (i = 0; src + i && dest + i && i < N; i++)
@@ -133,7 +177,6 @@ void copy_matrix(const float *src, float *dest, int N) {
   if (i != N)
     printf("copy failed at %d while there are %d elements in total.\n", i, N);
 }
-
 
 void print_matrix(const float *A, int M, int N, std::ofstream &fs) {
   int i;
@@ -173,6 +216,38 @@ void print_matrix_hf(const __half *A, int M, int N, std::ofstream &fs) {
   fs << "]\n";
 }
 
+void print_matrix_int8(const int8_t *A, int M, int N, std::ofstream &fs) {
+  int i;
+  fs << "[";
+  for (i = 0; i < M * N; i++) {
+    if ((i + 1) % N == 0)
+      fs << std::setw(5) << (int)A[i]; // Set field width and write the value
+    else
+      fs << std::setw(5) << (int)A[i] << ", ";
+    if ((i + 1) % N == 0) {
+      if (i + 1 < M * N)
+        fs << ";\n";
+    }
+  }
+  fs << "]\n";
+}
+
+void print_matrix_int(const int32_t *A, int M, int N, std::ofstream &fs) {
+  int i;
+  fs << "[";
+  for (i = 0; i < M * N; i++) {
+    if ((i + 1) % N == 0)
+      fs << std::setw(5) << A[i]; // Set field width and write the value
+    else
+      fs << std::setw(5) << A[i] << ", ";
+    if ((i + 1) % N == 0) {
+      if (i + 1 < M * N)
+        fs << ";\n";
+    }
+  }
+  fs << "]\n";
+}
+
 bool verify_matrix(float *matRef, float *matOut, int N) {
   double diff = 0.0;
   int i;
@@ -201,19 +276,61 @@ bool verify_matrix_hf(__half *matRef, __half *matOut, int N) {
   return true;
 }
 
-void float_array_to_half(__half * half_mat, float * float_mat, int size) {
+bool verify_matrix_int(int32_t *matRef, int32_t *matOut, int N) {
+  int diff = 0;
+  int i;
+  for (i = 0; i < N; i++) {
+    diff = std::fabs(matRef[i] - matOut[i]);
+    if (diff > 0) {
+      printf("Divergence! Should %d, Is %d (Diff %d) at %d\n", matRef[i],
+             matOut[i], diff, i);
+      return false;
+    }
+  }
+  return true;
+}
+
+void float_array_to_half(__half *half_mat, float *float_mat, int size) {
   int i;
   for (i = 0; i < size; i++) {
     half_mat[i] = __float2half(float_mat[i]);
   }
 }
 
-void half_array_to_float(__half * half_mat, float * float_mat, int size) {
+void half_array_to_float(__half *half_mat, float *float_mat, int size) {
   int i;
   for (i = 0; i < size; i++) {
     float_mat[i] = __half2float(half_mat[i]);
   }
 }
+
+// void float_array_to_int(int32_t *int_mat, float *float_mat, int size) {
+//   int i;
+//   for (i = 0; i < size; i++) {
+//     int_mat[i] = __float2int_rn(float_mat[i]);
+//   }
+// }
+//
+// void int_array_to_float(int32_t *int_mat, float *float_mat, int size) {
+//   int i;
+//   for (i = 0; i < size; i++) {
+//     float_mat[i] = __int2float_rn(int_mat[i]);
+//   }
+// }
+//
+// void half_array_to_int(int32_t *int_mat, __half *half_mat, int size) {
+//   int i;
+//   for (i = 0; i < size; i++) {
+//     int_mat[i] = __half2int_rn(half_mat[i]);
+//   }
+// }
+//
+// void int_array_to_half(int32_t *int_mat, __half *half_mat, int size) {
+//   int i;
+//   for (i = 0; i < size; i++) {
+//     half_mat[i] = __int2half_rn(int_mat[i]);
+//   }
+// }
 
 int div_ceil(int numerator, int denominator) {
   std::div_t res = std::div(numerator, denominator);
@@ -222,11 +339,17 @@ int div_ceil(int numerator, int denominator) {
 
 void runCublasFP32(cublasHandle_t handle, int M, int N, int K, float alpha,
                    float *A, float *B, float beta, float *C) {
-  // cuBLAS uses column-major order. So we change the order of our row-major A &
-  // B, since (B^T*A^T)^T = (A*B)
-  // This runs cuBLAS in full fp32 mode
+  // cuBLAS uses column-major order. So we change the order of our row-major A
+  // & B, since (B^T*A^T)^T = (A*B) This runs cuBLAS in full fp32 mode
   cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_32F,
                N, A, CUDA_R_32F, K, &beta, C, CUDA_R_32F, N, CUBLAS_COMPUTE_32F,
+               CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+}
+
+void runCublasINT8(cublasHandle_t handle, int M, int N, int K, float alpha,
+                   int8_t *A, int8_t *B, float beta, int32_t *C) {
+  cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_8I,
+               N, A, CUDA_R_8I, K, &beta, C, CUDA_R_32I, N, CUBLAS_COMPUTE_32I,
                CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 }
 
@@ -608,7 +731,7 @@ void runSgemmDoubleBuffering2(int M, int N, int K, float alpha, float *A,
       <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
 }
 void runSgemmTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
+                        float beta, float *C) {
   const uint BK = 64;
 
   if (M >= 128 and N >= 128) {
@@ -632,13 +755,13 @@ void runSgemmTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
   }
 }
 void runSgemmTensorCore2(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
+                         float beta, float *C) {
   const uint BK = 64;
   if (M >= 128 and N >= 128) {
     const uint BM = 128;
     const uint BN = 128;
     dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-    dim3 blockDim((16*BM * BN) / (WMMA_M * WMMA_N));
+    dim3 blockDim((16 * BM * BN) / (WMMA_M * WMMA_N));
     sgemmTensorCores2<BM, BN, BK>
         <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
   } else {
@@ -647,124 +770,133 @@ void runSgemmTensorCore2(int M, int N, int K, float alpha, __half *A, __half *B,
     const uint BM = 64;
     const uint BN = 64;
     dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-    dim3 blockDim((32*BM * BN) / (WMMA_M * WMMA_N));
+    dim3 blockDim((32 * BM * BN) / (WMMA_M * WMMA_N));
     //     dim3 blockDim(32, 8);
     // dim3 gridDim(CEIL_DIV(N, 16), CEIL_DIV(M, 16));
     sgemmTensorCores2<BM, BN, BK>
         <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
   }
 }
-void runSgemmVectorizedTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
-    const uint BK = 32;
-    const uint BM = 128;
-    const uint BN = 128;
-    dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-    dim3 blockDim((16*BM * BN) / (WMMA_M * WMMA_N));
-    runSgemmVectorizedTensorCore<BM, BN, BK>
-        <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
-
-}
-
-void runSgemmTensorCoreMma(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
+void runSgemmVectorizedTensorCore(int M, int N, int K, float alpha, __half *A,
+                                  __half *B, float beta, float *C) {
   const uint BK = 32;
   const uint BM = 128;
   const uint BN = 128;
   dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-  dim3 blockDim((16*BM * BN) / (WMMA_M * WMMA_N));
+  dim3 blockDim((16 * BM * BN) / (WMMA_M * WMMA_N));
+  runSgemmVectorizedTensorCore<BM, BN, BK>
+      <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+}
+
+void runSgemmTensorCoreMma(int M, int N, int K, float alpha, __half *A,
+                           __half *B, float beta, float *C) {
+  const uint BK = 32;
+  const uint BM = 128;
+  const uint BN = 128;
+  dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
+  dim3 blockDim((16 * BM * BN) / (WMMA_M * WMMA_N));
   runSgemmPtxMma<BM, BN, BK>
       <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
-
 }
 
-void runSgemmVectorizedTensorCore2(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
+void runSgemmIntTensorCoreMma(int M, int N, int K, float alpha, int8_t *A,
+                              int8_t *B, float beta, int32_t *C) {
+  const uint BK = 32;
+  const uint BM = 128;
+  const uint BN = 128;
+  dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
+  dim3 blockDim((16 * BM * BN) / (WMMA_M * WMMA_N));
+  runSgemmIntPtxMma<BM, BN, BK>
+      <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
+}
+
+void runSgemmVectorizedTensorCore2(int M, int N, int K, float alpha, __half *A,
+                                   __half *B, float beta, float *C) {
   const uint BK = 64;
   const uint BM = 128;
   const uint BN = 128;
   dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-  dim3 blockDim((16*BM * BN) / (WMMA_M * WMMA_N));
+  dim3 blockDim((16 * BM * BN) / (WMMA_M * WMMA_N));
   runSgemmVectorizedTensorCore2<BM, BN, BK>
       <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
-
 }
 
-void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
+void runSgemmDoubleBufferingTensorCore(int M, int N, int K, float alpha,
+                                       __half *A, __half *B, float beta,
+                                       float *C) {
   const uint BK = 32;
   const uint BM = 128;
   const uint BN = 128;
   dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-  dim3 blockDim((16*BM * BN) / (WMMA_M * WMMA_N));
+  dim3 blockDim((16 * BM * BN) / (WMMA_M * WMMA_N));
   runSgemmDoubleBufferingTensorCore<BM, BN, BK>
       <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
-
 }
 
-void runSgemmDoubleBufferingTensorCore_stride3(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
+void runSgemmDoubleBufferingTensorCore_stride3(int M, int N, int K, float alpha,
+                                               __half *A, __half *B, float beta,
+                                               float *C) {
   const uint BK = 32;
   const uint BM = 128;
   const uint BN = 128;
   dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-  dim3 blockDim((16*BM * BN) / (WMMA_M * WMMA_N));
+  dim3 blockDim((16 * BM * BN) / (WMMA_M * WMMA_N));
   runSgemmDoubleBufferingTensorCoreStride3<BM, BN, BK>
       <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
-
 }
 
-void runSgemmTensorCoreBankConflicts(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
+void runSgemmTensorCoreBankConflicts(int M, int N, int K, float alpha,
+                                     __half *A, __half *B, float beta,
+                                     float *C) {
   const uint BK = 32;
   const uint BM = 128;
   const uint BN = 128;
   dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-  dim3 blockDim((16*BM * BN) / (WMMA_M * WMMA_N));
+  dim3 blockDim((16 * BM * BN) / (WMMA_M * WMMA_N));
   runSgemmTensorCoreBankConflicts<BM, BN, BK>
       <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
-
 }
-void runSgemmTensorCoreResolveStall(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
+void runSgemmTensorCoreResolveStall(int M, int N, int K, float alpha, __half *A,
+                                    __half *B, float beta, float *C) {
   const uint BK = 64;
   const uint BM = 128;
   const uint BN = 128;
   dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-  dim3 blockDim((2*BM * BN) / (WMMA_M * WMMA_N));
+  dim3 blockDim((2 * BM * BN) / (WMMA_M * WMMA_N));
   runSgemmResolvingStallsTensorCore<BM, BN, BK>
-      <<<gridDim, blockDim,(sizeof(__half) * 2*128*64)>>>(M, N, K, alpha, A, B, beta, C);
-
+      <<<gridDim, blockDim, (sizeof(__half) * 2 * 128 * 64)>>>(M, N, K, alpha,
+                                                               A, B, beta, C);
 }
-void runSgemmTensorCoreResolveStall2(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
+void runSgemmTensorCoreResolveStall2(int M, int N, int K, float alpha,
+                                     __half *A, __half *B, float beta,
+                                     float *C) {
   const uint BK = 32;
   const uint BM = 128;
   const uint BN = 128;
   dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
-  dim3 blockDim((4*BM * BN) / (WMMA_M * WMMA_N));
+  dim3 blockDim((4 * BM * BN) / (WMMA_M * WMMA_N));
   runSgemmResolvingStallsTensorCore2<BM, BN, BK>
       <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
-
 }
-void runSgemmNaiveMultiwarpTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
+void runSgemmNaiveMultiwarpTensorCore(int M, int N, int K, float alpha,
+                                      __half *A, __half *B, float beta,
+                                      float *C) {
   const uint warp_per_block = 4;
   dim3 blockDim(WARPSIZE * warp_per_block, 1, 1);
-  dim3 gridDim(2*N / (WMMA_N*warp_per_block), 2*M / (WMMA_M*warp_per_block), 1);
+  dim3 gridDim(2 * N / (WMMA_N * warp_per_block),
+               2 * M / (WMMA_M * warp_per_block), 1);
 
   // Launch the kernel
   naiveMultiwarpTensorCores<warp_per_block>
-  <<<gridDim, blockDim>>>(A, B, C, M, N, K);
+      <<<gridDim, blockDim>>>(A, B, C, M, N, K);
 }
-void runSgemmNaiveTensorCore(int M, int N, int K, float alpha, __half *A, __half *B,
-                           float beta, float *C) {
-  dim3 blockDim(32, 1, 1);  // A warp per block
+void runSgemmNaiveTensorCore(int M, int N, int K, float alpha, __half *A,
+                             __half *B, float beta, float *C) {
+  dim3 blockDim(32, 1, 1); // A warp per block
   dim3 gridDim(N / WMMA_N, M / WMMA_M, 1);
 
   // Launch the kernel
   naiveTensorCores<<<gridDim, blockDim>>>(A, B, C, M, N, K);
-
 }
 
 void run_kernel(int kernel_num, int M, int N, int K, float alpha, float *A,
@@ -814,52 +946,57 @@ void run_kernel(int kernel_num, int M, int N, int K, float alpha, float *A,
   }
 }
 
-void run_tensor_core_kernel(int kernel_num, int M, int N, int K, float alpha, __half *A,
-                __half *B, float beta, float *C, cublasHandle_t handle) {
+void run_tensor_core_kernel(int kernel_num, int M, int N, int K, float alpha,
+                            __half *A, __half *B, float beta, float *C,
+                            cublasHandle_t handle) {
   switch (kernel_num) {
-    case 0:
-      runCublasFP16(handle, M, N, K, alpha, A, B, beta, C);
-      break;
-    case 13:
-      runSgemmTensorCore(M, N, K, alpha, A, B, beta, C);
-      break;
-    case 14:
-      runSgemmNaiveTensorCore(M, N, K, alpha, A, B, beta, C);
-      break;
-    case 15:
-      runSgemmNaiveMultiwarpTensorCore(M, N, K, alpha, A, B, beta, C);
-      break;
-    case 16:
-      runSgemmTensorCore2(M, N, K, alpha, A, B, beta, C);
-      break;
-    case 17:
-      runSgemmVectorizedTensorCore(M, N, K, alpha, A, B, beta, C);
-      break;
-    case 18:
-      runSgemmVectorizedTensorCore2(M, N, K, alpha, A, B, beta, C);
-      break;
-    case 19:
-      runSgemmDoubleBufferingTensorCore(M, N, K, alpha, A, B, beta, C);
-      break;
-    case 20:
-      runSgemmDoubleBufferingTensorCore_stride3(M, N, K, alpha, A, B, beta, C);
-      break;
-    case 21:
-      runSgemmTensorCoreBankConflicts(M, N, K, alpha, A, B, beta, C);
+  case 0:
+    runCublasFP16(handle, M, N, K, alpha, A, B, beta, C);
     break;
-    case 22:
-      runSgemmTensorCoreResolveStall(M, N, K, alpha, A, B, beta, C);
+  case 13:
+    runSgemmTensorCore(M, N, K, alpha, A, B, beta, C);
     break;
-    case 23:
-      runSgemmTensorCoreResolveStall2(M, N, K, alpha, A, B, beta, C);
+  case 14:
+    runSgemmNaiveTensorCore(M, N, K, alpha, A, B, beta, C);
     break;
-    case 24:
-      runSgemmTensorCoreMma(M, N, K, alpha, A, B, beta, C);
+  case 15:
+    runSgemmNaiveMultiwarpTensorCore(M, N, K, alpha, A, B, beta, C);
     break;
-    case 25:
-      runSgemmTensorCoreMmaAlt(M, N, K, alpha, A, B, beta, C);
+  case 16:
+    runSgemmTensorCore2(M, N, K, alpha, A, B, beta, C);
     break;
-    default:
-      throw std::invalid_argument("Unknown kernel number");
+  case 17:
+    runSgemmVectorizedTensorCore(M, N, K, alpha, A, B, beta, C);
+    break;
+  case 18:
+    runSgemmVectorizedTensorCore2(M, N, K, alpha, A, B, beta, C);
+    break;
+  case 19:
+    runSgemmDoubleBufferingTensorCore(M, N, K, alpha, A, B, beta, C);
+    break;
+  case 20:
+    runSgemmDoubleBufferingTensorCore_stride3(M, N, K, alpha, A, B, beta, C);
+    break;
+  case 21:
+    runSgemmTensorCoreBankConflicts(M, N, K, alpha, A, B, beta, C);
+    break;
+  case 22:
+    runSgemmTensorCoreResolveStall(M, N, K, alpha, A, B, beta, C);
+    break;
+  case 23:
+    runSgemmTensorCoreResolveStall2(M, N, K, alpha, A, B, beta, C);
+    break;
+  case 24:
+    runSgemmTensorCoreMma(M, N, K, alpha, A, B, beta, C);
+    break;
+  case 25:
+    runSgemmTensorCoreMmaAlt(M, N, K, alpha, A, B, beta, C);
+    break;
+  case 26:
+    throw std::invalid_argument(
+        "tensor_core_int_mma is run directly in sgemm.cu.");
+    break;
+  default:
+    throw std::invalid_argument("Unknown kernel number");
   }
 }

@@ -32,6 +32,7 @@ KERNEL_NAMES = {
     9: "Autotuning",
     10: "Warptiling",
     11: "Double Buffering",
+    26: "INT8"
 }
 
 
@@ -77,9 +78,9 @@ def plot(df: pd.DataFrame):
     for i, kernel in enumerate(df["kernel"].unique()):
         # right align the text
         plt.text(
-            df[df["kernel"] == i]["size"].iloc[-1],
-            df[df["kernel"] == i]["gflops"].iloc[-1] + 300,
-            f"{i}:{KERNEL_NAMES[i]}",
+            df[df["kernel"] == kernel]["size"].iloc[-1], # I think there was a bug here.
+            df[df["kernel"] == kernel]["gflops"].iloc[-1] + 300,
+            f"{i}:{KERNEL_NAMES[kernel]}",
             color=colors[i],
             horizontalalignment="left",
             weight="medium",
@@ -115,9 +116,10 @@ if __name__ == "__main__":
 
     df = df[df["size"] == 4096].sort_values(by="gflops", ascending=True)[["kernel", "gflops"]]
     df["kernel"] = df["kernel"].map({k: f"{k}: {v}" for k, v in KERNEL_NAMES.items()})
+    # Disable relperf if only running one kernel.
     df["relperf"] = df["gflops"] / df[df["kernel"] == "0: cuBLAS"]["gflops"].iloc[0]
     df["relperf"] = df["relperf"].apply(lambda x: f"{x*100:.1f}%")
-    df.columns = ["Kernel", "GFLOPs/s", "Performance relative to cuBLAS"]
+    df.columns = ["Kernel", "GFLOPs/s",] # "Performance relative to cuBLAS"]
 
     # update the README.md with the new results
     with open("README.md", "r") as f:

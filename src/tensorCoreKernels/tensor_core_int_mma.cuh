@@ -15,14 +15,30 @@
 #define MMA_K 16
 #define WARP_SIZE 32
 
+__device__ inline void store_mma_results_16x8_vectorized(int32_t *C_tile_ptr,
+                                                         const int32_t *acc,
+                                                         int N, int lane) {
+  // Each thread handles a 2x2 block within the 16x8 tile
+  int row_offset = (lane / 4);
+  int col_offset = (lane % 4) * 2; // Base column for the pair
+
+  // Calculate pointers to the start of the pair for the top and bottom rows
+  int32_t *C_pair0_ptr = C_tile_ptr + row_offset * N + col_offset;
+  int32_t *C_pair1_ptr = C_tile_ptr + (row_offset + 8) * N + col_offset;
+
+  // Store using int2. Assumes N is even and C_tile_ptr alignment allows this.
+  reinterpret_cast<int2 *>(C_pair0_ptr)[0] = make_int2(acc[0], acc[1]);
+  reinterpret_cast<int2 *>(C_pair1_ptr)[0] = make_int2(acc[2], acc[3]);
+}
+
 template <const int BM, const int BN, const int BK>
-__global__ void runSgemmIntPtxMma(int M, int N, int K, float alpha, int8_t *A,
-                                  int8_t *B, float beta, int32_t *C) {
+__global__ void runSgemmIntPtxMma(int M, int N, int K, int32_t alpha, int8_t *A,
+                                  int8_t *B, int32_t beta, int32_t *C) {
   // Determine block index and thread index
   const uint cRow = blockIdx.y;
   const uint cCol = blockIdx.x;
   const uint totalResultsBlocktile = BM * BN;
-  const uint numThreadsBlocktile = 16 * totalResultsBlocktile / (MMA_M * 16);
+  const uint numThreadsBlocktile = totalResultsBlocktile / (MMA_M);
   const uint numWarpBlocktile = numThreadsBlocktile / WARP_SIZE;
 
   assert(numThreadsBlocktile == blockDim.x);
@@ -50,6 +66,7 @@ __global__ void runSgemmIntPtxMma(int M, int N, int K, float alpha, int8_t *A,
 
   // The warp a thread is located in
   const int threadWarp = threadIdx.x / WARP_SIZE;
+  int lane = (threadIdx.x % WARP_SIZE);
   int numWarpSpanBN = numWarpBlocktile / (BM / MMA_M);
   int numColSpanBN = (BN / MMA_N) / numWarpSpanBN;
   int warpRow = threadWarp / numWarpSpanBN;
@@ -57,7 +74,6 @@ __global__ void runSgemmIntPtxMma(int M, int N, int K, float alpha, int8_t *A,
 
   uint32_t ARegisters[2];
   uint32_t BRegisters[4];
-  int lane = (threadIdx.x % WARP_SIZE);
 
   // Initialize registers for PTX-level MMA operations
   int32_t acc0[4] = {0, 0, 0, 0};
@@ -92,13 +108,16 @@ __global__ void runSgemmIntPtxMma(int M, int N, int K, float alpha, int8_t *A,
       asm volatile("ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0, %1}, [%2];\n"
                    : "=r"(ARegisters[0]), "=r"(ARegisters[1])
                    : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(
-                       &(As[(warpRow * MMA_M) * BK + i])))));
+                       &(As[(warpRow * MMA_M) * BK + i + (lane % 16) * BK +
+                            (lane / 16) * 8])))));
 
-      asm volatile(
-          "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {%0, %1}, [%2];\n"
-          : "=r"(BRegisters[0]), "=r"(BRegisters[1])
-          : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(
-              &(Bs[i * BN + warpCol * numColSpanBN * MMA_N])))));
+      asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%0, %1, "
+                   "%2, %3}, [%4];\n"
+                   : "=r"(BRegisters[0]), "=r"(BRegisters[1]),
+                     "=r"(BRegisters[2]), "=r"(BRegisters[3])
+                   : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(
+                       &(Bs[i * BN + warpCol * numColSpanBN * MMA_N +
+                            (lane % 16) * BN])))));
 
       // PTX inline assembly for MMA, using explicit casts to short
       asm volatile("mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 "
@@ -118,12 +137,6 @@ __global__ void runSgemmIntPtxMma(int M, int N, int K, float alpha, int8_t *A,
                      "r"(acc1[0]), "r"(acc1[1]), "r"(acc1[2]),
                      "r"(acc1[3]) // Accumulators
       );
-
-      asm volatile(
-          "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {%0, %1}, [%2];\n"
-          : "=r"(BRegisters[2]), "=r"(BRegisters[3])
-          : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(
-              &(Bs[i * BN + (warpCol * numColSpanBN + 2) * MMA_N])))));
 
       asm volatile("mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 "
                    "{%0, %1, %2, %3}, {%4, %5}, {%6}, {%7, %8, %9, %10};\n"
@@ -147,36 +160,13 @@ __global__ void runSgemmIntPtxMma(int M, int N, int K, float alpha, int8_t *A,
     __syncthreads();
   }
 
-  C[(warpRow * MMA_M) * N + warpCol * numColSpanBN * MMA_N + (lane / 4) * N +
-    (lane % 4) * 2] = acc0[0];
-  C[(warpRow * MMA_M) * N + warpCol * numColSpanBN * MMA_N + (lane / 4) * N +
-    (lane % 4) * 2 + 1] = acc0[1];
-  C[(warpRow * MMA_M) * N + warpCol * numColSpanBN * MMA_N +
-    (lane / 4 + 8) * N + (lane % 4) * 2] = acc0[2];
-  C[(warpRow * MMA_M) * N + warpCol * numColSpanBN * MMA_N +
-    (lane / 4 + 8) * N + (lane % 4) * 2 + 1] = acc0[3];
-  C[(warpRow * MMA_M) * N + (warpCol * numColSpanBN + 1) * MMA_N +
-    (lane / 4) * N + (lane % 4) * 2] = acc1[0];
-  C[(warpRow * MMA_M) * N + (warpCol * numColSpanBN + 1) * MMA_N +
-    (lane / 4) * N + (lane % 4) * 2 + 1] = acc1[1];
-  C[(warpRow * MMA_M) * N + (warpCol * numColSpanBN + 1) * MMA_N +
-    (lane / 4 + 8) * N + (lane % 4) * 2] = acc1[2];
-  C[(warpRow * MMA_M) * N + (warpCol * numColSpanBN + 1) * MMA_N +
-    (lane / 4 + 8) * N + (lane % 4) * 2 + 1] = acc1[3];
-  C[(warpRow * MMA_M) * N + (warpCol * numColSpanBN + 2) * MMA_N +
-    (lane / 4) * N + (lane % 4) * 2] = acc2[0];
-  C[(warpRow * MMA_M) * N + (warpCol * numColSpanBN + 2) * MMA_N +
-    (lane / 4) * N + (lane % 4) * 2 + 1] = acc2[1];
-  C[(warpRow * MMA_M) * N + (warpCol * numColSpanBN + 2) * MMA_N +
-    (lane / 4 + 8) * N + (lane % 4) * 2] = acc2[2];
-  C[(warpRow * MMA_M) * N + (warpCol * numColSpanBN + 2) * MMA_N +
-    (lane / 4 + 8) * N + (lane % 4) * 2 + 1] = acc2[3];
-  C[(warpRow * MMA_M) * N + (warpCol * numColSpanBN + 3) * MMA_N +
-    (lane / 4) * N + (lane % 4) * 2] = acc3[0];
-  C[(warpRow * MMA_M) * N + (warpCol * numColSpanBN + 3) * MMA_N +
-    (lane / 4) * N + (lane % 4) * 2 + 1] = acc3[1];
-  C[(warpRow * MMA_M) * N + (warpCol * numColSpanBN + 3) * MMA_N +
-    (lane / 4 + 8) * N + (lane % 4) * 2] = acc3[2];
-  C[(warpRow * MMA_M) * N + (warpCol * numColSpanBN + 3) * MMA_N +
-    (lane / 4 + 8) * N + (lane % 4) * 2 + 1] = acc3[3];
+  int32_t *C_warp_base = C + (warpRow * MMA_M) * N + (warpCol * 4 * MMA_N);
+  store_mma_results_16x8_vectorized(C_warp_base + 0 * MMA_N, acc0, N,
+                                    lane); // Tile 0
+  store_mma_results_16x8_vectorized(C_warp_base + 1 * MMA_N, acc1, N,
+                                    lane); // Tile 1
+  store_mma_results_16x8_vectorized(C_warp_base + 2 * MMA_N, acc2, N,
+                                    lane); // Tile 2
+  store_mma_results_16x8_vectorized(C_warp_base + 3 * MMA_N, acc3, N,
+                                    lane); // Tile 3
 }

@@ -248,6 +248,25 @@ void print_matrix_int(const int32_t *A, int M, int N, std::ofstream &fs) {
   fs << "]\n";
 }
 
+void print_matrix_int_transposed(const int32_t *A, int M, int N,
+                                 std::ofstream &fs) {
+  fs << "[";
+  for (int row = 0; row < M; ++row) {
+    for (int col = 0; col < N; ++col) {
+      int idx = col * M + row; // because A is transposed
+      if (col == N - 1) {
+        fs << std::setw(5) << A[idx]; // last column, no comma
+      } else {
+        fs << std::setw(5) << A[idx] << ", ";
+      }
+    }
+    if (row != M - 1) {
+      fs << ";\n"; // semicolon + newline after each row except last
+    }
+  }
+  fs << "]\n";
+}
+
 bool verify_matrix(float *matRef, float *matOut, int N) {
   double diff = 0.0;
   int i;
@@ -276,15 +295,18 @@ bool verify_matrix_hf(__half *matRef, __half *matOut, int N) {
   return true;
 }
 
-bool verify_matrix_int(int32_t *matRef, int32_t *matOut, int N) {
-  int diff = 0;
-  int i;
-  for (i = 0; i < N; i++) {
-    diff = std::fabs(matRef[i] - matOut[i]);
-    if (diff > 0) {
-      printf("Divergence! Should %d, Is %d (Diff %d) at %d\n", matRef[i],
-             matOut[i], diff, i);
-      return false;
+bool verify_matrix_int(int32_t *matRef, int32_t *matOut, int m, int n) {
+  for (int row = 0; row < m; ++row) {
+    for (int col = 0; col < n; ++col) {
+      int ref_idx =
+          col * m + row; // matRef is transposed version: (col, row) layout
+      int out_idx = row * n + col; // matOut is normal: (row, col) layout
+      int diff = std::abs(matRef[ref_idx] - matOut[out_idx]);
+      if (diff != 0) {
+        printf("Divergence! Should %d, Is %d (Diff %d) at (row=%d, col=%d)\n",
+               matRef[ref_idx], matOut[out_idx], diff, row, col);
+        return false;
+      }
     }
   }
   return true;
@@ -346,9 +368,9 @@ void runCublasFP32(cublasHandle_t handle, int M, int N, int K, float alpha,
                CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 }
 
-void runCublasINT8(cublasHandle_t handle, int M, int N, int K, float alpha,
-                   int8_t *A, int8_t *B, float beta, int32_t *C) {
-  cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, M, N, K, &alpha, A, CUDA_R_8I,
+void runCublasINT8(cublasHandle_t handle, int M, int N, int K, int32_t alpha,
+                   int8_t *A, int8_t *B, int32_t beta, int32_t *C) {
+  cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N, M, N, K, &alpha, A, CUDA_R_8I,
                M, B, CUDA_R_8I, K, &beta, C, CUDA_R_32I, M,
                CUBLAS_COMPUTE_32I_PEDANTIC, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 }
@@ -799,9 +821,9 @@ void runSgemmTensorCoreMma(int M, int N, int K, float alpha, __half *A,
       <<<gridDim, blockDim>>>(M, N, K, alpha, A, B, beta, C);
 }
 
-void runSgemmIntTensorCoreMma(int M, int N, int K, float alpha, int8_t *A,
-                              int8_t *B, float beta, int32_t *C) {
-  const uint BK = 32;
+void runSgemmIntTensorCoreMma(int M, int N, int K, int32_t alpha, int8_t *A,
+                              int8_t *B, int32_t beta, int32_t *C) {
+  const uint BK = 16;
   const uint BM = 128;
   const uint BN = 128;
   dim3 gridDim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
